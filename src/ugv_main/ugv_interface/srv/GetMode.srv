@@ -1,0 +1,6 @@
+# Request
+---
+# Response
+string current_mode
+bool is_active
+string[] available_modes

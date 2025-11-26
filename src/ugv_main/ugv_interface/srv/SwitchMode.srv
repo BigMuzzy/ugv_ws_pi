@@ -1,0 +1,10 @@
+# Request
+string mode         # 'mapping', 'navigation', 'idle'
+string[] arg_names  # Optional argument names (e.g., ['map_path', 'use_rviz'])
+string[] arg_values # Optional argument values (e.g., ['/path/to/map', 'false'])
+---
+# Response
+bool success
+string message
+string previous_mode
+string current_mode

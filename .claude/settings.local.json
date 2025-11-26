@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(source:*)",
+      "Bash(ros2 node list:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

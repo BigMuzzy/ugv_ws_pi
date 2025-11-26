@@ -1,0 +1,84 @@
+#!/usr/bin/env python3
+"""
+Master launch file for UGV Robot
+This file launches all necessary nodes and subsystems for autonomous operation
+
+Launches:
+1. OAK-D Lite camera (ugv_vision)
+2. Navigation stack with AMCL localization (ugv_nav)
+"""
+
+from launch import LaunchDescription
+from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch_ros.substitutions import FindPackageShare
+
+
+def generate_launch_description():
+    # Declare launch arguments
+    declare_use_sim_time = DeclareLaunchArgument(
+        'use_sim_time',
+        default_value='false',
+        description='Use simulation time if true'
+    )
+    
+    declare_map_file = DeclareLaunchArgument(
+        'map',
+        default_value='/home/ws/ugv_ws/maps/second_floor.yaml',
+        description='Full path to map file to load'
+    )
+    
+    # Get launch configuration
+    use_sim_time = LaunchConfiguration('use_sim_time')
+    map_file = LaunchConfiguration('map')
+
+    # ============================================================================
+    # 1. OAK-D Lite Camera
+    # ============================================================================
+    
+    oak_camera_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            PathJoinSubstitution([
+                FindPackageShare('ugv_vision'),
+                'launch',
+                'oak_d_lite.launch.py'
+            ])
+        ])
+    )
+
+    # ============================================================================
+    # 2. Navigation Stack with AMCL Localization
+    # ============================================================================
+    
+    navigation_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            PathJoinSubstitution([
+                FindPackageShare('ugv_nav'),
+                'launch',
+                'nav.launch.py'
+            ])
+        ]),
+        launch_arguments=[
+            ('use_localization', 'amcl'),
+            ('use_rviz', 'false'),
+            ('map', map_file),
+            ('use_sim_time', use_sim_time),
+        ]
+    )
+
+    # ============================================================================
+    # Build and return LaunchDescription
+    # ============================================================================
+    
+    ld = LaunchDescription()
+    
+    # Add launch arguments
+    ld.add_action(declare_use_sim_time)
+    ld.add_action(declare_map_file)
+    
+    # Add launch files
+    ld.add_action(oak_camera_launch)
+    ld.add_action(navigation_launch)
+    
+    return ld

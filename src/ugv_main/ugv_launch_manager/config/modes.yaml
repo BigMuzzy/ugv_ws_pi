@@ -1,0 +1,22 @@
+modes:
+  # Idle mode - only camera
+  idle:
+    launch_package: 'ugv_launch_manager'
+    launch_file: 'mode_idle.launch.py'
+    description: 'Camera only mode'
+
+  # Mapping mode - SLAM with camera and sensors
+  mapping:
+    launch_package: 'ugv_launch_manager'
+    launch_file: 'mode_mapping.launch.py'
+    arguments:
+      map_path: '/home/ws/ugv_ws/maps/new_map'
+    description: 'SLAM mapping mode with all sensors'
+
+  # Navigation mode - AMCL localization with Nav2
+  navigation:
+    launch_package: 'ugv_launch_manager'
+    launch_file: 'mode_navigation.launch.py'
+    arguments:
+      map_path: '/home/ws/ugv_ws/maps/second_floor.yaml'
+    description: 'Navigation with AMCL localization'
