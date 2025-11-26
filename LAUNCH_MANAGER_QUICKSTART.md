@@ -1,18 +1,6 @@
 # Launch Manager - Quick Reference
 
-## Session: 2025-11-23
-Initial build of ROS2 service-based launch manager for dynamic mode switching.
-
-## Session: 2025-11-24
-Enhanced launch manager with idle mode improvements, auto-start, persistent agent, custom map paths, and auto-save functionality.
-
-## Session: 2025-11-26
-Extracted auto-save from mapping mode and created manual save_map service for on-demand map saving.
-Added teleoperation support to idle mode for robot control without mapping/navigation overhead.
-
----
-
-## What We Built
+## Overview
 
 ROS2 service-based launch manager for dynamic mode switching between idle, mapping, and navigation modes with the following features:
 
@@ -159,60 +147,6 @@ ros2 service call /ugv/save_map ugv_interface/srv/MapSave "{map_path: '/home/ws/
 
 ---
 
-## Files Modified/Created
-
-### Session 2025-11-24 Changes
-
-**Service Definition:**
-- `ugv_interface/srv/SwitchMode.srv` - Added `arg_names` and `arg_values` arrays
-
-**Launch Manager Package:**
-- `ugv_launch_manager/launch/mode_idle.launch.py` - NEW: Idle mode with camera and robot state
-- `ugv_launch_manager/launch/mode_mapping.launch.py` - Added `map_path` parameter
-- `ugv_launch_manager/launch/mode_navigation.launch.py` - Changed `map` to `map_path` parameter
-- `ugv_launch_manager/launch/manager.launch.py` - Added `default_mode` parameter
-- `ugv_launch_manager/ugv_launch_manager/launch_manager_node.py` - Major enhancements:
-  - Auto-start mode functionality
-  - Persistent agent script management
-  - Custom argument handling
-  - Auto-save map functionality
-  - Current mode arguments tracking
-- `ugv_launch_manager/config/modes.yaml` - Updated with map_path for mapping and navigation
-
-### Session 2025-11-26 Changes
-
-**Service Definition:**
-- `ugv_interface/srv/MapSave.srv` - Updated to use `map_path` with success/message response pattern
-
-**Launch Manager Package:**
-- `ugv_launch_manager/ugv_launch_manager/launch_manager_node.py` - Changed from auto-save to manual save:
-  - Removed auto-save logic from `switch_mode_callback` and `stop_all_callback`
-  - Added `/ugv/save_map` service and `save_map_callback` handler
-  - Updated `save_map()` method to return success status tuple
-  - Service supports both explicit map paths and using current mapping mode's path
-- `ugv_launch_manager/launch/mode_idle.launch.py` - Added teleoperation support:
-  - Added ugv_bringup node for robot initialization
-  - Added ugv_driver node for motor control
-  - Added base_node for cmd_vel control
-  - Added pub_odom_tf launch argument
-  - Idle mode now supports full teleoperation without mapping/navigation overhead
-
----
-
-## Status
-
-✅ All services working
-✅ Mode switching tested and functional
-✅ Process management working (force kill after 10s timeout is normal)
-✅ Idle mode with teleoperation support (camera + motor control)
-✅ Auto-start mode on launch
-✅ Persistent agent script integration
-✅ Custom map path parameters
-✅ Manual map save service (`/ugv/save_map`) implemented
-✅ Auto-save removed for better manual control
-
----
-
 ## Rebuild Instructions
 
 After modifying service definitions or launch files:
@@ -295,10 +229,8 @@ See: `/home/ws/ugv_ws/src/ugv_main/ugv_launch_manager/README.md`
 
 ---
 
-## Next Steps / TODO
+## Future Improvements
 
-- [x] Add service to manually trigger map save during mapping (✅ 2025-11-26)
-- [x] Remove auto-save for better manual control (✅ 2025-11-26)
 - [ ] Test manual save_map service with real mapping session
 - [ ] Verify agent script persistence through mode switches
 - [ ] Test custom map paths with navigation
