@@ -15,7 +15,7 @@ from launch_ros.descriptions import ComposableNode
 
 
 def launch_setup(context, *args, **kwargs):
-    """Set up the idle mode launch - camera with robot state"""
+    """Set up the idle mode launch - camera with robot state and teleoperation"""
     # Get the name of the camera
     name = LaunchConfiguration("name").perform(context)
     # Get the depthai_ros_driver package directory
@@ -49,10 +49,33 @@ def launch_setup(context, *args, **kwargs):
         arguments=[urdf_model_path]
     )
 
+    # Bringup node for robot initialization
+    bringup_node = Node(
+        package='ugv_bringup',
+        executable='ugv_bringup',
+    )
+
+    # Driver node for motor control
+    driver_node = Node(
+        package='ugv_bringup',
+        executable='ugv_driver',
+    )
+
+    # Base node for cmd_vel control
+    base_node = Node(
+        package='ugv_base_node',
+        executable='base_node',
+        parameters=[{'pub_odom_tf': LaunchConfiguration('pub_odom_tf')}]
+    )
+
     return [
         # Robot state and joint state publishers for TF frames
         robot_state_publisher_node,
         joint_state_publisher_node,
+        # Motor control nodes for teleoperation
+        bringup_node,
+        driver_node,
+        base_node,
         # Include the camera.launch.py from depthai_ros_driver
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
@@ -105,6 +128,11 @@ def generate_launch_description():
             ),
         ),
         DeclareLaunchArgument("rectify_rgb", default_value="True"),
+        DeclareLaunchArgument(
+            "pub_odom_tf",
+            default_value="true",
+            description="Whether to publish the tf from odom to base_footprint"
+        ),
     ]
 
     return LaunchDescription(

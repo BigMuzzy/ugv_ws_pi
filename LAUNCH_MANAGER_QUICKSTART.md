@@ -8,6 +8,7 @@ Enhanced launch manager with idle mode improvements, auto-start, persistent agen
 
 ## Session: 2025-11-26
 Extracted auto-save from mapping mode and created manual save_map service for on-demand map saving.
+Added teleoperation support to idle mode for robot control without mapping/navigation overhead.
 
 ---
 
@@ -21,7 +22,7 @@ ROS2 service-based launch manager for dynamic mode switching between idle, mappi
 3. **Persistent Agent Script** - Runs `~/.transitive/start_agent.sh` throughout manager lifetime
 4. **Custom Map Paths** - Specify map paths for both mapping and navigation modes
 5. **Manual Map Save** - Save maps on demand during mapping mode via service call
-6. **Idle Mode** - Complete camera setup with robot state publishers for proper TF frames
+6. **Idle Mode with Teleoperation** - Camera, robot state, and motor control for lightweight operation
 
 ---
 
@@ -44,13 +45,16 @@ ros2 launch ugv_launch_manager manager.launch.py default_mode:=mapping
 ## Available Modes
 
 ### Idle Mode
-- **Description**: Camera with robot state publishers (for proper TF frames)
+- **Description**: Camera with robot state publishers and teleoperation support
 - **Components**:
   - OAK-D Lite camera
   - robot_state_publisher (publishes URDF and TF)
   - joint_state_publisher (publishes joint states)
   - Image rectification node
-- **Use case**: Basic monitoring, testing camera
+  - ugv_bringup node (robot initialization)
+  - ugv_driver node (motor driver)
+  - base_node (cmd_vel control for teleoperation)
+- **Use case**: Basic monitoring, testing camera, teleoperation without mapping/navigation
 - **Launch**: `mode_idle.launch.py`
 
 ### Mapping Mode
@@ -186,6 +190,12 @@ ros2 service call /ugv/save_map ugv_interface/srv/MapSave "{map_path: '/home/ws/
   - Added `/ugv/save_map` service and `save_map_callback` handler
   - Updated `save_map()` method to return success status tuple
   - Service supports both explicit map paths and using current mapping mode's path
+- `ugv_launch_manager/launch/mode_idle.launch.py` - Added teleoperation support:
+  - Added ugv_bringup node for robot initialization
+  - Added ugv_driver node for motor control
+  - Added base_node for cmd_vel control
+  - Added pub_odom_tf launch argument
+  - Idle mode now supports full teleoperation without mapping/navigation overhead
 
 ---
 
@@ -194,7 +204,7 @@ ros2 service call /ugv/save_map ugv_interface/srv/MapSave "{map_path: '/home/ws/
 ✅ All services working
 ✅ Mode switching tested and functional
 ✅ Process management working (force kill after 10s timeout is normal)
-✅ Idle mode with full robot state publishers
+✅ Idle mode with teleoperation support (camera + motor control)
 ✅ Auto-start mode on launch
 ✅ Persistent agent script integration
 ✅ Custom map path parameters
@@ -247,10 +257,12 @@ ros2 launch ugv_launch_manager manager.launch.py
    ```
 2. Set navigation goals via Nav2
 
-### Monitoring Only
+### Monitoring and Teleoperation
 1. Launch manager auto-starts in idle mode
 2. View camera with: `rqt_image_view`
 3. Camera topics available immediately
+4. Teleoperate robot with keyboard or joystick (publishes to `/cmd_vel`)
+   - Example: `ros2 run teleop_twist_keyboard teleop_twist_keyboard`
 
 ---
 
