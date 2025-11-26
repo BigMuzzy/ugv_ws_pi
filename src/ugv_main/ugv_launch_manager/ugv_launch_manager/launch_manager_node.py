@@ -6,7 +6,7 @@ Provides ROS2 services to dynamically switch between operational modes
 
 import rclpy
 from rclpy.node import Node
-from ugv_interface.srv import SwitchMode, GetMode, StopAll
+from ugv_interface.srv import SwitchMode, GetMode, StopAll, MapSave
 from ament_index_python.packages import get_package_share_directory
 import os
 import yaml
@@ -61,10 +61,17 @@ class LaunchManagerNode(Node):
             self.stop_all_callback
         )
 
+        self.save_map_srv = self.create_service(
+            MapSave,
+            '/ugv/save_map',
+            self.save_map_callback
+        )
+
         self.get_logger().info("Launch Manager ready! Available services:")
         self.get_logger().info("  - /ugv/switch_mode")
         self.get_logger().info("  - /ugv/get_mode")
         self.get_logger().info("  - /ugv/stop_all")
+        self.get_logger().info("  - /ugv/save_map")
 
         # Auto-start default mode if specified
         if default_mode and default_mode != 'none':
@@ -145,8 +152,12 @@ class LaunchManagerNode(Node):
             except Exception as e:
                 self.get_logger().error(f"Error stopping agent script: {e}")
 
-    def save_map(self, map_path: str):
-        """Save the current map using map_saver CLI"""
+    def save_map(self, map_path: str) -> tuple[bool, str]:
+        """Save the current map using map_saver CLI
+
+        Returns:
+            tuple[bool, str]: (success, message)
+        """
         try:
             self.get_logger().info(f"Saving map to: {map_path}")
 
@@ -159,14 +170,22 @@ class LaunchManagerNode(Node):
             )
 
             if result.returncode == 0:
-                self.get_logger().info(f"Map saved successfully to {map_path}.yaml and {map_path}.pgm")
+                message = f"Map saved successfully to {map_path}.yaml and {map_path}.pgm"
+                self.get_logger().info(message)
+                return True, message
             else:
-                self.get_logger().error(f"Failed to save map: {result.stderr}")
+                message = f"Failed to save map: {result.stderr}"
+                self.get_logger().error(message)
+                return False, message
 
         except subprocess.TimeoutExpired:
-            self.get_logger().error("Map saving timed out after 10 seconds")
+            message = "Map saving timed out after 10 seconds"
+            self.get_logger().error(message)
+            return False, message
         except Exception as e:
-            self.get_logger().error(f"Error saving map: {e}")
+            message = f"Error saving map: {e}"
+            self.get_logger().error(message)
+            return False, message
 
     def load_mode_config(self) -> dict:
         """Load mode definitions from YAML config"""
@@ -228,12 +247,6 @@ class LaunchManagerNode(Node):
 
         # Stop current mode if active
         if self.process_mgr.is_active():
-            # Save map if switching away from mapping mode
-            if previous_mode == 'mapping' and 'map_path' in self.current_mode_arguments:
-                map_path = self.current_mode_arguments['map_path']
-                self.get_logger().info(f"Switching away from mapping mode, saving map...")
-                self.save_map(map_path)
-
             self.get_logger().info(f"Stopping current mode: {previous_mode}")
             if not self.process_mgr.stop_launch():
                 response.success = False
@@ -312,13 +325,6 @@ class LaunchManagerNode(Node):
         self.get_logger().info("Stop all requested")
 
         if self.process_mgr.is_active():
-            # Save map if stopping from mapping mode
-            current_mode = self.process_mgr.current_mode
-            if current_mode == 'mapping' and 'map_path' in self.current_mode_arguments:
-                map_path = self.current_mode_arguments['map_path']
-                self.get_logger().info(f"Stopping mapping mode, saving map...")
-                self.save_map(map_path)
-
             if self.process_mgr.stop_launch():
                 self.process_mgr.set_mode('idle')
                 self.current_mode_arguments = {}
@@ -333,6 +339,33 @@ class LaunchManagerNode(Node):
             response.success = True
             response.message = "No active systems to stop"
             self.get_logger().info(response.message)
+
+        return response
+
+    def save_map_callback(self, request, response):
+        """Handle manual map save requests"""
+        map_path = request.map_path
+
+        # If no map_path provided, use the current mapping mode's map_path
+        if not map_path:
+            if self.process_mgr.current_mode != 'mapping':
+                response.success = False
+                response.message = "Not in mapping mode and no map_path provided"
+                self.get_logger().error(response.message)
+                return response
+
+            if 'map_path' not in self.current_mode_arguments:
+                response.success = False
+                response.message = "Current mapping mode has no map_path set"
+                self.get_logger().error(response.message)
+                return response
+
+            map_path = self.current_mode_arguments['map_path']
+
+        # Save the map
+        success, message = self.save_map(map_path)
+        response.success = success
+        response.message = message
 
         return response
 

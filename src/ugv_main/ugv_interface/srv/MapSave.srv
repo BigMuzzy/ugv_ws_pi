@@ -1,3 +1,6 @@
-string mapname
+# Request
+string map_path  # Path to save map (without extension). If empty, uses current mapping mode map_path
 ---
-string response
+# Response
+bool success
+string message

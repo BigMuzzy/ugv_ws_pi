@@ -6,6 +6,9 @@ Initial build of ROS2 service-based launch manager for dynamic mode switching.
 ## Session: 2025-11-24
 Enhanced launch manager with idle mode improvements, auto-start, persistent agent, custom map paths, and auto-save functionality.
 
+## Session: 2025-11-26
+Extracted auto-save from mapping mode and created manual save_map service for on-demand map saving.
+
 ---
 
 ## What We Built
@@ -17,7 +20,7 @@ ROS2 service-based launch manager for dynamic mode switching between idle, mappi
 2. **Auto-Start Mode** - Automatically start in a specified mode (default: idle)
 3. **Persistent Agent Script** - Runs `~/.transitive/start_agent.sh` throughout manager lifetime
 4. **Custom Map Paths** - Specify map paths for both mapping and navigation modes
-5. **Auto-Save Maps** - Automatically save maps when switching away from mapping mode
+5. **Manual Map Save** - Save maps on demand during mapping mode via service call
 6. **Idle Mode** - Complete camera setup with robot state publishers for proper TF frames
 
 ---
@@ -58,7 +61,7 @@ ros2 launch ugv_launch_manager manager.launch.py default_mode:=mapping
   - robot_pose_publisher
 - **Parameters**:
   - `map_path`: Where to save the map (default: `/home/ws/ugv_ws/maps/new_map`)
-- **Auto-save**: Map automatically saves when switching away from mapping mode
+- **Manual save**: Use `/ugv/save_map` service to save map on demand
 - **Launch**: `mode_mapping.launch.py`
 
 ### Navigation Mode
@@ -114,7 +117,19 @@ ros2 service call /ugv/switch_mode ugv_interface/srv/SwitchMode "{mode: 'navigat
 ```bash
 ros2 service call /ugv/stop_all ugv_interface/srv/StopAll
 ```
-*Note: Automatically saves map if stopping from mapping mode*
+
+### Save Map During Mapping
+
+**Save with current map_path (from mapping mode):**
+```bash
+ros2 service call /ugv/save_map ugv_interface/srv/MapSave "{map_path: ''}"
+```
+
+**Save to custom path:**
+```bash
+ros2 service call /ugv/save_map ugv_interface/srv/MapSave "{map_path: '/home/ws/ugv_ws/maps/my_custom_map'}"
+```
+*Note: Must be in mapping mode to use empty map_path*
 
 ---
 
@@ -131,12 +146,12 @@ ros2 service call /ugv/stop_all ugv_interface/srv/StopAll
 - **Default arguments**: Set in YAML, can be overridden via service call
 - **Argument merging**: Service arguments override YAML defaults
 
-### Auto-Save Feature
-- **Trigger**: Switching away from mapping mode OR calling stop_all
+### Manual Map Save Feature
+- **Trigger**: Manual service call to `/ugv/save_map`
 - **Method**: Uses `map_saver_cli` from nav2_map_server
 - **Output**: Creates both `.yaml` and `.pgm` files
 - **Timeout**: 10 seconds for save operation
-- **Path**: Uses the `map_path` specified when starting mapping mode
+- **Path**: Can specify custom path or use current mapping mode's `map_path`
 
 ---
 
@@ -160,6 +175,18 @@ ros2 service call /ugv/stop_all ugv_interface/srv/StopAll
   - Current mode arguments tracking
 - `ugv_launch_manager/config/modes.yaml` - Updated with map_path for mapping and navigation
 
+### Session 2025-11-26 Changes
+
+**Service Definition:**
+- `ugv_interface/srv/MapSave.srv` - Updated to use `map_path` with success/message response pattern
+
+**Launch Manager Package:**
+- `ugv_launch_manager/ugv_launch_manager/launch_manager_node.py` - Changed from auto-save to manual save:
+  - Removed auto-save logic from `switch_mode_callback` and `stop_all_callback`
+  - Added `/ugv/save_map` service and `save_map_callback` handler
+  - Updated `save_map()` method to return success status tuple
+  - Service supports both explicit map paths and using current mapping mode's path
+
 ---
 
 ## Status
@@ -171,7 +198,8 @@ ros2 service call /ugv/stop_all ugv_interface/srv/StopAll
 ✅ Auto-start mode on launch
 ✅ Persistent agent script integration
 ✅ Custom map path parameters
-✅ Auto-save maps when leaving mapping mode
+✅ Manual map save service (`/ugv/save_map`) implemented
+✅ Auto-save removed for better manual control
 
 ---
 
@@ -205,7 +233,12 @@ ros2 launch ugv_launch_manager manager.launch.py
    ros2 service call /ugv/switch_mode ugv_interface/srv/SwitchMode "{mode: 'mapping', arg_names: ['map_path'], arg_values: ['/home/ws/ugv_ws/maps/new_area']}"
    ```
 3. Drive robot around to create map
-4. Switch to navigation or idle (map auto-saves to new_area.yaml and new_area.pgm)
+4. Save map when satisfied with coverage:
+   ```bash
+   ros2 service call /ugv/save_map ugv_interface/srv/MapSave "{map_path: ''}"
+   ```
+   (Empty map_path uses the current mapping mode's path: `/home/ws/ugv_ws/maps/new_area`)
+5. Continue mapping or switch to another mode
 
 ### Navigation with Existing Map
 1. Switch to navigation with specific map:
@@ -237,9 +270,10 @@ ros2 launch ugv_launch_manager manager.launch.py
 - Check launch manager logs for agent PID
 
 **Map not saving:**
-- Verify nav2_map_server is available
+- Verify nav2_map_server is available: `ros2 pkg list | grep nav2_map_server`
 - Check launch manager logs for save errors
-- Ensure mapping mode was started with valid map_path
+- Ensure you're in mapping mode or provide explicit map_path
+- Verify map topic is being published: `ros2 topic echo /map --once`
 
 ---
 
@@ -251,8 +285,10 @@ See: `/home/ws/ugv_ws/src/ugv_main/ugv_launch_manager/README.md`
 
 ## Next Steps / TODO
 
-- [ ] Test auto-save functionality with real mapping session
+- [x] Add service to manually trigger map save during mapping (✅ 2025-11-26)
+- [x] Remove auto-save for better manual control (✅ 2025-11-26)
+- [ ] Test manual save_map service with real mapping session
 - [ ] Verify agent script persistence through mode switches
 - [ ] Test custom map paths with navigation
 - [ ] Consider adding map quality check before save
-- [ ] Add service to manually trigger map save during mapping
+- [ ] Add option to save multiple map snapshots during same mapping session
