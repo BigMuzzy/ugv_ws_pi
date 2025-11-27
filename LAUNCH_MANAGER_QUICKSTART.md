@@ -231,8 +231,5 @@ See: `/home/ws/ugv_ws/src/ugv_main/ugv_launch_manager/README.md`
 
 ## Future Improvements
 
-- [ ] Test manual save_map service with real mapping session
-- [ ] Verify agent script persistence through mode switches
-- [ ] Test custom map paths with navigation
 - [ ] Consider adding map quality check before save
 - [ ] Add option to save multiple map snapshots during same mapping session
