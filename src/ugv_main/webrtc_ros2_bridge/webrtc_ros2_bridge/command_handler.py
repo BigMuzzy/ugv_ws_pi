@@ -68,7 +68,7 @@ class CommandHandler:
             angular_z: Angular velocity around z axis
         """
         if self._emergency_stop:
-            self._node.get_logger().warn("Emergency stop active, ignoring command")
+            self._node.get_logger().warning("Emergency stop active, ignoring command")
             return
 
         # Clamp values to limits
@@ -98,7 +98,7 @@ class CommandHandler:
         self._emergency_stop = active
         if active:
             self._stop()
-            self._node.get_logger().warn("Emergency stop activated!")
+            self._node.get_logger().warning("Emergency stop activated!")
         else:
             self._node.get_logger().info("Emergency stop deactivated")
 

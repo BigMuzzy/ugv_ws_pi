@@ -81,7 +81,7 @@ class SignalingServer:
         # Start video source
         if not self._video_source.start():
             if self._logger:
-                self._logger.warn("Video source not available")
+                self._logger.warning("Video source not available")
 
         # Create video track if available
         if AIORTC_AVAILABLE:
@@ -235,7 +235,7 @@ class SignalingServer:
 
         except json.JSONDecodeError:
             if self._logger:
-                self._logger.warn(f"Invalid JSON from {peer_id}")
+                self._logger.warning(f"Invalid JSON from {peer_id}")
         except Exception as e:
             if self._logger:
                 self._logger.error(f"Error handling WS message: {e}")

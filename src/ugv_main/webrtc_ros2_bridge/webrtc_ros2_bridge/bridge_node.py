@@ -78,7 +78,7 @@ class WebRTCBridgeNode(Node):
         self.get_logger().info("WebRTC Bridge Node initialized")
 
         if not AIORTC_AVAILABLE:
-            self.get_logger().warn(
+            self.get_logger().warning(
                 "aiortc not available - WebRTC features disabled. "
                 "Install with: pip install aiortc"
             )
@@ -195,7 +195,7 @@ class WebRTCBridgeNode(Node):
                                     config[key] = file_config[key]
                     self.get_logger().info(f"Loaded config from {config_file}")
                 except Exception as e:
-                    self.get_logger().warn(f"Failed to load config file: {e}")
+                    self.get_logger().warning(f"Failed to load config file: {e}")
 
         return config
 

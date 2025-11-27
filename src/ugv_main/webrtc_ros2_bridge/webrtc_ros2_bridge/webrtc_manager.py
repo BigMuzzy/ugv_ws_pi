@@ -184,7 +184,7 @@ class WebRTCManager:
 
         except json.JSONDecodeError:
             if self._logger:
-                self._logger.warn(f"Invalid JSON message from {peer_id}")
+                self._logger.warning(f"Invalid JSON message from {peer_id}")
         except Exception as e:
             if self._logger:
                 self._logger.error(f"Error handling message: {e}")
@@ -234,7 +234,7 @@ class WebRTCManager:
 
         if peer_id not in self._peer_connections:
             if self._logger:
-                self._logger.warn(f"Unknown peer for ICE candidate: {peer_id}")
+                self._logger.warning(f"Unknown peer for ICE candidate: {peer_id}")
             return
 
         # aiortc handles ICE candidates automatically through the offer/answer
