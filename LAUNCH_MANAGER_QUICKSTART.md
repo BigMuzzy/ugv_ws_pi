@@ -227,9 +227,4 @@ ros2 launch ugv_launch_manager manager.launch.py
 
 See: `/home/ws/ugv_ws/src/ugv_main/ugv_launch_manager/README.md`
 
----
 
-## Future Improvements
-
-- [ ] Consider adding map quality check before save
-- [ ] Add option to save multiple map snapshots during same mapping session
