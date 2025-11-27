@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Robot Teleoperation</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        header {
+            background: #16213e;
+            padding: 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid #0f3460;
+        }
+        
+        h1 {
+            font-size: 1.5rem;
+            color: #e94560;
+        }
+        
+        .status {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+        
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background: #0f3460;
+            border-radius: 5px;
+        }
+        
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #666;
+        }
+        
+        .status-dot.connected {
+            background: #4ade80;
+            box-shadow: 0 0 10px #4ade80;
+        }
+        
+        .status-dot.connecting {
+            background: #fbbf24;
+            animation: pulse 1s infinite;
+        }
+        
+        .status-dot.error {
+            background: #ef4444;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        main {
+            flex: 1;
+            display: flex;
+            padding: 1rem;
+            gap: 1rem;
+        }
+        
+        .video-container {
+            flex: 2;
+            background: #000;
+            border-radius: 10px;
+            overflow: hidden;
+            position: relative;
+            min-height: 400px;
+        }
+        
+        #remoteVideo {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+        
+        .video-overlay {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 0.5rem 1rem;
+            border-radius: 5px;
+            font-size: 0.875rem;
+        }
+        
+        .controls-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            max-width: 300px;
+        }
+        
+        .panel {
+            background: #16213e;
+            border-radius: 10px;
+            padding: 1rem;
+        }
+        
+        .panel h2 {
+            font-size: 1rem;
+            color: #e94560;
+            margin-bottom: 1rem;
+            border-bottom: 1px solid #0f3460;
+            padding-bottom: 0.5rem;
+        }
+        
+        .connection-controls {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+        
+        input[type="text"] {
+            background: #0f3460;
+            border: 1px solid #1a1a2e;
+            color: #eee;
+            padding: 0.5rem;
+            border-radius: 5px;
+            font-size: 0.875rem;
+        }
+        
+        button {
+            background: #e94560;
+            color: #fff;
+            border: none;
+            padding: 0.75rem 1rem;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.875rem;
+            font-weight: bold;
+            transition: background 0.2s;
+        }
+        
+        button:hover {
+            background: #c73e54;
+        }
+        
+        button:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+        
+        button.emergency {
+            background: #dc2626;
+            font-size: 1.25rem;
+            padding: 1rem;
+        }
+        
+        button.emergency:hover {
+            background: #b91c1c;
+        }
+        
+        button.emergency.active {
+            background: #166534;
+        }
+        
+        .joystick-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1rem;
+        }
+        
+        .joystick {
+            width: 150px;
+            height: 150px;
+            background: #0f3460;
+            border-radius: 50%;
+            position: relative;
+            touch-action: none;
+        }
+        
+        .joystick-knob {
+            width: 60px;
+            height: 60px;
+            background: #e94560;
+            border-radius: 50%;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            cursor: grab;
+            transition: transform 0.1s ease-out;
+        }
+        
+        .joystick-knob:active {
+            cursor: grabbing;
+        }
+        
+        .keyboard-info {
+            font-size: 0.75rem;
+            color: #888;
+            text-align: center;
+        }
+        
+        .keyboard-info kbd {
+            background: #0f3460;
+            padding: 0.25rem 0.5rem;
+            border-radius: 3px;
+            margin: 0 0.25rem;
+        }
+        
+        .stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+        }
+        
+        .stat-item {
+            background: #0f3460;
+            padding: 0.5rem;
+            border-radius: 5px;
+        }
+        
+        .stat-label {
+            color: #888;
+            font-size: 0.75rem;
+        }
+        
+        .stat-value {
+            color: #4ade80;
+            font-weight: bold;
+        }
+        
+        @media (max-width: 768px) {
+            main {
+                flex-direction: column;
+            }
+            
+            .controls-panel {
+                max-width: none;
+            }
+            
+            .video-container {
+                min-height: 300px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>🤖 Robot Teleoperation</h1>
+        <div class="status">
+            <div class="status-indicator">
+                <div class="status-dot" id="statusDot"></div>
+                <span id="statusText">Disconnected</span>
+            </div>
+            <div class="status-indicator">
+                <span>Latency: </span>
+                <span id="latency">--</span>ms
+            </div>
+        </div>
+    </header>
+    
+    <main>
+        <div class="video-container">
+            <video id="remoteVideo" autoplay playsinline muted></video>
+            <div class="video-overlay">
+                <span id="videoStatus">No video</span>
+            </div>
+        </div>
+        
+        <div class="controls-panel">
+            <div class="panel">
+                <h2>Connection</h2>
+                <div class="connection-controls">
+                    <input type="text" id="serverUrl" placeholder="ws://localhost:8080/ws" value="">
+                    <button id="connectBtn" onclick="toggleConnection()">Connect</button>
+                </div>
+            </div>
+            
+            <div class="panel">
+                <h2>Emergency Stop</h2>
+                <button class="emergency" id="estopBtn" onclick="toggleEmergencyStop()">
+                    🛑 EMERGENCY STOP
+                </button>
+            </div>
+            
+            <div class="panel">
+                <h2>Controls</h2>
+                <div class="joystick-container">
+                    <div class="joystick" id="joystick">
+                        <div class="joystick-knob" id="joystickKnob"></div>
+                    </div>
+                    <div class="keyboard-info">
+                        <p>Keyboard: <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or Arrows</p>
+                        <p><kbd>Space</kbd> Emergency Stop</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="panel">
+                <h2>Statistics</h2>
+                <div class="stats">
+                    <div class="stat-item">
+                        <div class="stat-label">Linear X</div>
+                        <div class="stat-value" id="linearX">0.00</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Angular Z</div>
+                        <div class="stat-value" id="angularZ">0.00</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Commands/s</div>
+                        <div class="stat-value" id="cmdRate">0</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Connection</div>
+                        <div class="stat-value" id="connState">Closed</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+    
+    <script>
+        // WebRTC and WebSocket connections
+        let ws = null;
+        let pc = null;
+        let dataChannel = null;
+        
+        // State
+        let isConnected = false;
+        let emergencyStop = false;
+        let currentVelocity = { linear: { x: 0, y: 0, z: 0 }, angular: { x: 0, y: 0, z: 0 } };
+        let commandCount = 0;
+        let lastCommandCountReset = Date.now();
+        
+        // Configuration
+        const MAX_LINEAR_SPEED = 0.5;
+        const MAX_ANGULAR_SPEED = 1.0;
+        const COMMAND_RATE = 20; // Hz
+        
+        // DOM elements
+        const statusDot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+        const latencyDisplay = document.getElementById('latency');
+        const videoElement = document.getElementById('remoteVideo');
+        const videoStatus = document.getElementById('videoStatus');
+        const serverUrlInput = document.getElementById('serverUrl');
+        const connectBtn = document.getElementById('connectBtn');
+        const estopBtn = document.getElementById('estopBtn');
+        const joystick = document.getElementById('joystick');
+        const joystickKnob = document.getElementById('joystickKnob');
+        
+        // Set default server URL
+        serverUrlInput.value = `ws://${window.location.hostname || 'localhost'}:8080/ws`;
+        
+        // Update status display
+        function updateStatus(status, text) {
+            statusDot.className = 'status-dot ' + status;
+            statusText.textContent = text;
+            document.getElementById('connState').textContent = text;
+        }
+        
+        // Toggle connection
+        function toggleConnection() {
+            if (isConnected) {
+                disconnect();
+            } else {
+                connect();
+            }
+        }
+        
+        // Connect to signaling server
+        async function connect() {
+            const serverUrl = serverUrlInput.value;
+            if (!serverUrl) {
+                alert('Please enter server URL');
+                return;
+            }
+            
+            updateStatus('connecting', 'Connecting...');
+            connectBtn.disabled = true;
+            
+            try {
+                // Create WebSocket connection
+                ws = new WebSocket(serverUrl);
+                
+                ws.onopen = () => {
+                    console.log('WebSocket connected');
+                    createPeerConnection();
+                };
+                
+                ws.onmessage = async (event) => {
+                    const message = JSON.parse(event.data);
+                    await handleSignalingMessage(message);
+                };
+                
+                ws.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                    updateStatus('error', 'Connection Error');
+                    connectBtn.disabled = false;
+                };
+                
+                ws.onclose = () => {
+                    console.log('WebSocket closed');
+                    disconnect();
+                };
+                
+            } catch (error) {
+                console.error('Connection error:', error);
+                updateStatus('error', 'Failed to connect');
+                connectBtn.disabled = false;
+            }
+        }
+        
+        // Create WebRTC peer connection
+        async function createPeerConnection() {
+            const config = {
+                iceServers: [
+                    { urls: 'stun:stun.l.google.com:19302' },
+                    { urls: 'stun:stun1.l.google.com:19302' }
+                ]
+            };
+            
+            pc = new RTCPeerConnection(config);
+            
+            // Handle ICE candidates
+            pc.onicecandidate = (event) => {
+                if (event.candidate) {
+                    ws.send(JSON.stringify({
+                        type: 'ice_candidate',
+                        candidate: event.candidate
+                    }));
+                }
+            };
+            
+            // Handle connection state changes
+            pc.onconnectionstatechange = () => {
+                console.log('Connection state:', pc.connectionState);
+                if (pc.connectionState === 'connected') {
+                    isConnected = true;
+                    updateStatus('connected', 'Connected');
+                    connectBtn.textContent = 'Disconnect';
+                    connectBtn.disabled = false;
+                    startCommandLoop();
+                } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+                    disconnect();
+                }
+            };
+            
+            // Handle incoming video track
+            pc.ontrack = (event) => {
+                console.log('Received track:', event.track.kind);
+                if (event.track.kind === 'video') {
+                    videoElement.srcObject = event.streams[0];
+                    videoStatus.textContent = 'Video connected';
+                }
+            };
+            
+            // Create data channel for commands
+            dataChannel = pc.createDataChannel('commands', { ordered: false });
+            dataChannel.onopen = () => {
+                console.log('Data channel opened');
+            };
+            dataChannel.onclose = () => {
+                console.log('Data channel closed');
+            };
+            dataChannel.onmessage = (event) => {
+                handleDataChannelMessage(JSON.parse(event.data));
+            };
+            
+            // Create and send offer
+            try {
+                const offer = await pc.createOffer({
+                    offerToReceiveVideo: true,
+                    offerToReceiveAudio: false
+                });
+                await pc.setLocalDescription(offer);
+                
+                ws.send(JSON.stringify({
+                    type: 'offer',
+                    sdp: offer.sdp
+                }));
+            } catch (error) {
+                console.error('Error creating offer:', error);
+            }
+        }
+        
+        // Handle signaling messages
+        async function handleSignalingMessage(message) {
+            if (message.type === 'answer') {
+                try {
+                    await pc.setRemoteDescription(new RTCSessionDescription({
+                        type: 'answer',
+                        sdp: message.sdp
+                    }));
+                } catch (error) {
+                    console.error('Error setting remote description:', error);
+                }
+            } else if (message.type === 'ice_candidate') {
+                try {
+                    await pc.addIceCandidate(new RTCIceCandidate(message.candidate));
+                } catch (error) {
+                    console.error('Error adding ICE candidate:', error);
+                }
+            } else if (message.type === 'pong') {
+                const latency = Date.now() - message.timestamp;
+                latencyDisplay.textContent = latency;
+            }
+        }
+        
+        // Handle data channel messages
+        function handleDataChannelMessage(message) {
+            if (message.type === 'pong') {
+                const latency = Date.now() - message.timestamp;
+                latencyDisplay.textContent = latency;
+            }
+        }
+        
+        // Disconnect
+        function disconnect() {
+            stopCommandLoop();
+            
+            if (dataChannel) {
+                dataChannel.close();
+                dataChannel = null;
+            }
+            
+            if (pc) {
+                pc.close();
+                pc = null;
+            }
+            
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+            
+            isConnected = false;
+            updateStatus('', 'Disconnected');
+            connectBtn.textContent = 'Connect';
+            connectBtn.disabled = false;
+            videoStatus.textContent = 'No video';
+            videoElement.srcObject = null;
+        }
+        
+        // Command loop
+        let commandLoopInterval = null;
+        
+        function startCommandLoop() {
+            if (commandLoopInterval) return;
+            
+            commandLoopInterval = setInterval(() => {
+                sendVelocityCommand();
+                measureLatency();
+                updateStats();
+            }, 1000 / COMMAND_RATE);
+        }
+        
+        function stopCommandLoop() {
+            if (commandLoopInterval) {
+                clearInterval(commandLoopInterval);
+                commandLoopInterval = null;
+            }
+        }
+        
+        // Send velocity command
+        function sendVelocityCommand() {
+            if (!dataChannel || dataChannel.readyState !== 'open') return;
+            if (emergencyStop) return;
+            
+            const message = {
+                type: 'cmd_vel',
+                linear: currentVelocity.linear,
+                angular: currentVelocity.angular
+            };
+            
+            dataChannel.send(JSON.stringify(message));
+            commandCount++;
+        }
+        
+        // Measure latency
+        function measureLatency() {
+            if (!dataChannel || dataChannel.readyState !== 'open') return;
+            
+            dataChannel.send(JSON.stringify({
+                type: 'ping',
+                timestamp: Date.now()
+            }));
+        }
+        
+        // Update statistics display
+        function updateStats() {
+            document.getElementById('linearX').textContent = currentVelocity.linear.x.toFixed(2);
+            document.getElementById('angularZ').textContent = currentVelocity.angular.z.toFixed(2);
+            
+            const now = Date.now();
+            if (now - lastCommandCountReset >= 1000) {
+                document.getElementById('cmdRate').textContent = commandCount;
+                commandCount = 0;
+                lastCommandCountReset = now;
+            }
+        }
+        
+        // Emergency stop
+        function toggleEmergencyStop() {
+            emergencyStop = !emergencyStop;
+            
+            if (emergencyStop) {
+                estopBtn.classList.add('active');
+                estopBtn.textContent = '✅ Resume';
+                currentVelocity = { linear: { x: 0, y: 0, z: 0 }, angular: { x: 0, y: 0, z: 0 } };
+                
+                if (dataChannel && dataChannel.readyState === 'open') {
+                    dataChannel.send(JSON.stringify({
+                        type: 'emergency_stop',
+                        active: true
+                    }));
+                }
+            } else {
+                estopBtn.classList.remove('active');
+                estopBtn.textContent = '🛑 EMERGENCY STOP';
+                
+                if (dataChannel && dataChannel.readyState === 'open') {
+                    dataChannel.send(JSON.stringify({
+                        type: 'emergency_stop',
+                        active: false
+                    }));
+                }
+            }
+        }
+        
+        // Keyboard controls
+        const keyState = {};
+        
+        document.addEventListener('keydown', (e) => {
+            if (e.target.tagName === 'INPUT') return;
+            
+            keyState[e.key.toLowerCase()] = true;
+            
+            if (e.key === ' ') {
+                e.preventDefault();
+                toggleEmergencyStop();
+            }
+            
+            updateVelocityFromKeys();
+        });
+        
+        document.addEventListener('keyup', (e) => {
+            keyState[e.key.toLowerCase()] = false;
+            updateVelocityFromKeys();
+        });
+        
+        function updateVelocityFromKeys() {
+            if (emergencyStop) return;
+            
+            let linearX = 0;
+            let angularZ = 0;
+            
+            // Forward/backward
+            if (keyState['w'] || keyState['arrowup']) linearX += MAX_LINEAR_SPEED;
+            if (keyState['s'] || keyState['arrowdown']) linearX -= MAX_LINEAR_SPEED;
+            
+            // Left/right rotation
+            if (keyState['a'] || keyState['arrowleft']) angularZ += MAX_ANGULAR_SPEED;
+            if (keyState['d'] || keyState['arrowright']) angularZ -= MAX_ANGULAR_SPEED;
+            
+            currentVelocity.linear.x = linearX;
+            currentVelocity.angular.z = angularZ;
+        }
+        
+        // Joystick controls
+        let isDragging = false;
+        let joystickRect = null;
+        
+        function initJoystick() {
+            joystickRect = joystick.getBoundingClientRect();
+            
+            joystickKnob.addEventListener('mousedown', startDrag);
+            joystickKnob.addEventListener('touchstart', startDrag, { passive: false });
+            
+            document.addEventListener('mousemove', drag);
+            document.addEventListener('touchmove', drag, { passive: false });
+            
+            document.addEventListener('mouseup', endDrag);
+            document.addEventListener('touchend', endDrag);
+        }
+        
+        function startDrag(e) {
+            e.preventDefault();
+            isDragging = true;
+            joystickRect = joystick.getBoundingClientRect();
+        }
+        
+        function drag(e) {
+            if (!isDragging || emergencyStop) return;
+            e.preventDefault();
+            
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            
+            const centerX = joystickRect.left + joystickRect.width / 2;
+            const centerY = joystickRect.top + joystickRect.height / 2;
+            
+            let deltaX = clientX - centerX;
+            let deltaY = clientY - centerY;
+            
+            // Limit to joystick bounds
+            const maxRadius = joystickRect.width / 2 - 30;
+            const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+            
+            if (distance > maxRadius) {
+                deltaX = (deltaX / distance) * maxRadius;
+                deltaY = (deltaY / distance) * maxRadius;
+            }
+            
+            // Update knob position
+            joystickKnob.style.transform = `translate(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px))`;
+            
+            // Convert to velocity (-1 to 1)
+            const normalizedX = -deltaY / maxRadius; // Forward/backward
+            const normalizedZ = -deltaX / maxRadius; // Left/right
+            
+            currentVelocity.linear.x = normalizedX * MAX_LINEAR_SPEED;
+            currentVelocity.angular.z = normalizedZ * MAX_ANGULAR_SPEED;
+        }
+        
+        function endDrag() {
+            if (!isDragging) return;
+            isDragging = false;
+            
+            // Reset joystick position
+            joystickKnob.style.transform = 'translate(-50%, -50%)';
+            
+            // Stop robot
+            currentVelocity.linear.x = 0;
+            currentVelocity.angular.z = 0;
+        }
+        
+        // Initialize
+        window.addEventListener('load', () => {
+            initJoystick();
+        });
+        
+        // Handle page visibility
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                // Stop robot when page is hidden
+                currentVelocity = { linear: { x: 0, y: 0, z: 0 }, angular: { x: 0, y: 0, z: 0 } };
+            }
+        });
+        
+        // Handle window close
+        window.addEventListener('beforeunload', () => {
+            disconnect();
+        });
+    </script>
+</body>
+</html>
