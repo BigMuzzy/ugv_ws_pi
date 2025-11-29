@@ -1,4 +1,8 @@
 # Request
+bool stop_mode         # Stop the current mode process
+bool stop_agent        # Stop the transitive agent
+bool stop_webrtc       # Stop the WebRTC bridge
+bool stop_ngrok        # Stop ngrok tunnel
 ---
 # Response
 bool success

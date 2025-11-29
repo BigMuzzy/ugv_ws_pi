@@ -11,6 +11,7 @@ from ament_index_python.packages import get_package_share_directory
 import os
 import yaml
 import subprocess
+import time
 from pathlib import Path
 
 from .launch_process_manager import LaunchProcessManager
@@ -37,6 +38,12 @@ class LaunchManagerNode(Node):
         # Start persistent agent script
         self.agent_process = None
         self.start_agent_script()
+
+        # Start ngrok and WebRTC bridge
+        self.ngrok_process = None
+        self.webrtc_bridge_process = None
+        self.start_ngrok()
+        self.start_webrtc_bridge()
 
         # Load mode configurations
         self.modes = self.load_mode_config()
@@ -151,6 +158,80 @@ class LaunchManagerNode(Node):
                     self.agent_process.wait()
             except Exception as e:
                 self.get_logger().error(f"Error stopping agent script: {e}")
+
+    def start_ngrok(self):
+        """Start ngrok tunnel on port 8080"""
+        try:
+            self.get_logger().info("Starting ngrok tunnel on port 8080...")
+            self.ngrok_process = subprocess.Popen(
+                ['ngrok', 'http', '8080'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True
+            )
+            self.get_logger().info(
+                f"ngrok started with PID: {self.ngrok_process.pid}"
+            )
+            # Wait a bit for ngrok to initialize
+            time.sleep(2)
+        except FileNotFoundError:
+            self.get_logger().error("ngrok not found. Please install ngrok.")
+            self.ngrok_process = None
+        except Exception as e:
+            self.get_logger().error(f"Failed to start ngrok: {e}")
+            self.ngrok_process = None
+
+    def stop_ngrok(self):
+        """Stop ngrok tunnel"""
+        if self.ngrok_process:
+            try:
+                self.get_logger().info("Stopping ngrok tunnel...")
+                self.ngrok_process.terminate()
+                try:
+                    self.ngrok_process.wait(timeout=5)
+                    self.get_logger().info("ngrok terminated cleanly")
+                except subprocess.TimeoutExpired:
+                    self.get_logger().warn("ngrok did not terminate, killing...")
+                    self.ngrok_process.kill()
+                    self.ngrok_process.wait()
+            except Exception as e:
+                self.get_logger().error(f"Error stopping ngrok: {e}")
+
+    def start_webrtc_bridge(self):
+        """Start WebRTC ROS2 bridge in background"""
+        try:
+            self.get_logger().info("Starting WebRTC ROS2 bridge...")
+            self.webrtc_bridge_process = subprocess.Popen(
+                [
+                    'ros2', 'launch', 'webrtc_ros2_bridge', 'bridge.launch.py',
+                    'host:=0.0.0.0', 'port:=8080'
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True
+            )
+            self.get_logger().info(
+                f"WebRTC bridge started with PID: {self.webrtc_bridge_process.pid}"
+            )
+        except Exception as e:
+            self.get_logger().error(f"Failed to start WebRTC bridge: {e}")
+            self.webrtc_bridge_process = None
+
+    def stop_webrtc_bridge(self):
+        """Stop WebRTC ROS2 bridge"""
+        if self.webrtc_bridge_process:
+            try:
+                self.get_logger().info("Stopping WebRTC bridge...")
+                self.webrtc_bridge_process.terminate()
+                try:
+                    self.webrtc_bridge_process.wait(timeout=5)
+                    self.get_logger().info("WebRTC bridge terminated cleanly")
+                except subprocess.TimeoutExpired:
+                    self.get_logger().warn("WebRTC bridge did not terminate, killing...")
+                    self.webrtc_bridge_process.kill()
+                    self.webrtc_bridge_process.wait()
+            except Exception as e:
+                self.get_logger().error(f"Error stopping WebRTC bridge: {e}")
 
     def save_map(self, map_path: str) -> tuple[bool, str]:
         """Save the current map using map_saver CLI
@@ -321,23 +402,88 @@ class LaunchManagerNode(Node):
         return response
 
     def stop_all_callback(self, request, response):
-        """Handle stop all request"""
-        self.get_logger().info("Stop all requested")
+        """Handle stop all request with selective process stopping"""
+        # If no flags are set, stop everything (backwards compatibility)
+        if not (request.stop_mode or request.stop_agent or request.stop_webrtc or request.stop_ngrok):
+            self.get_logger().info("Stop all requested - no flags set, stopping everything")
+            request.stop_mode = True
+            request.stop_agent = True
+            request.stop_webrtc = True
+            request.stop_ngrok = True
+        else:
+            flags = []
+            if request.stop_mode:
+                flags.append("mode")
+            if request.stop_agent:
+                flags.append("agent")
+            if request.stop_webrtc:
+                flags.append("webrtc")
+            if request.stop_ngrok:
+                flags.append("ngrok")
+            self.get_logger().info(f"Stop all requested - stopping: {', '.join(flags)}")
 
-        if self.process_mgr.is_active():
-            if self.process_mgr.stop_launch():
-                self.process_mgr.set_mode('idle')
-                self.current_mode_arguments = {}
-                response.success = True
-                response.message = "All systems stopped"
-                self.get_logger().info(response.message)
+        errors = []
+        stopped = []
+
+        # Stop current mode process
+        if request.stop_mode:
+            if self.process_mgr.is_active():
+                if self.process_mgr.stop_launch():
+                    self.process_mgr.set_mode('idle')
+                    self.current_mode_arguments = {}
+                    stopped.append("mode processes")
+                    self.get_logger().info("Mode processes stopped")
+                else:
+                    errors.append("Failed to stop mode processes")
+                    self.get_logger().error("Failed to stop mode processes")
             else:
-                response.success = False
-                response.message = "Failed to stop systems"
-                self.get_logger().error(response.message)
+                self.get_logger().info("No active mode to stop")
+
+        # Stop agent script
+        if request.stop_agent:
+            try:
+                self.stop_agent_script()
+                stopped.append("agent")
+            except Exception as e:
+                error_msg = f"Failed to stop agent: {e}"
+                errors.append(error_msg)
+                self.get_logger().error(error_msg)
+
+        # Stop WebRTC bridge
+        if request.stop_webrtc:
+            try:
+                self.stop_webrtc_bridge()
+                stopped.append("WebRTC bridge")
+            except Exception as e:
+                error_msg = f"Failed to stop WebRTC bridge: {e}"
+                errors.append(error_msg)
+                self.get_logger().error(error_msg)
+
+        # Stop ngrok
+        if request.stop_ngrok:
+            try:
+                self.stop_ngrok()
+                stopped.append("ngrok")
+            except Exception as e:
+                error_msg = f"Failed to stop ngrok: {e}"
+                errors.append(error_msg)
+                self.get_logger().error(error_msg)
+
+        # Build response
+        if errors:
+            response.success = False
+            if stopped:
+                response.message = f"Stopped: {', '.join(stopped)}. Errors: {'; '.join(errors)}"
+            else:
+                response.message = f"Failed to stop: {'; '.join(errors)}"
+            self.get_logger().warning(response.message)
+        elif stopped:
+            response.success = True
+            response.message = f"Successfully stopped: {', '.join(stopped)}"
+            self.get_logger().info(response.message)
         else:
             response.success = True
-            response.message = "No active systems to stop"
+            response.message = "No processes to stop"
             self.get_logger().info(response.message)
 
         return response
@@ -386,6 +532,10 @@ def main(args=None):
 
         # Stop persistent agent script
         node.stop_agent_script()
+
+        # Stop WebRTC bridge and ngrok
+        node.stop_webrtc_bridge()
+        node.stop_ngrok()
 
         node.destroy_node()
         rclpy.shutdown()

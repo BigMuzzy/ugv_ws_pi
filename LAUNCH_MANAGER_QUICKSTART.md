@@ -10,6 +10,10 @@ Enhanced launch manager with idle mode improvements, auto-start, persistent agen
 Extracted auto-save from mapping mode and created manual save_map service for on-demand map saving.
 Added teleoperation support to idle mode for robot control without mapping/navigation overhead.
 
+## Session: 2025-11-29
+Enhanced StopAll service with selective process stopping parameters.
+Added ability to selectively stop background processes (agent, WebRTC bridge, ngrok) independently from mode processes.
+
 ---
 
 ## What We Built
@@ -20,9 +24,11 @@ ROS2 service-based launch manager for dynamic mode switching between idle, mappi
 1. **Dynamic Mode Switching** - Switch between modes via ROS2 services
 2. **Auto-Start Mode** - Automatically start in a specified mode (default: idle)
 3. **Persistent Agent Script** - Runs `~/.transitive/start_agent.sh` throughout manager lifetime
-4. **Custom Map Paths** - Specify map paths for both mapping and navigation modes
-5. **Manual Map Save** - Save maps on demand during mapping mode via service call
-6. **Idle Mode with Teleoperation** - Camera, robot state, and motor control for lightweight operation
+4. **WebRTC Bridge & ngrok** - Background services for remote video streaming and tunneling
+5. **Custom Map Paths** - Specify map paths for both mapping and navigation modes
+6. **Manual Map Save** - Save maps on demand during mapping mode via service call
+7. **Idle Mode with Teleoperation** - Camera, robot state, and motor control for lightweight operation
+8. **Selective Process Stopping** - Stop individual background processes (agent, WebRTC, ngrok) or mode processes independently
 
 ---
 
@@ -118,8 +124,30 @@ ros2 service call /ugv/switch_mode ugv_interface/srv/SwitchMode "{mode: 'navigat
 ```
 
 ### Stop All Systems
+
+**Stop everything (mode + all background processes):**
 ```bash
 ros2 service call /ugv/stop_all ugv_interface/srv/StopAll
+```
+*Note: When no parameters are specified, all processes are stopped for backwards compatibility*
+
+**Stop only the current mode process:**
+```bash
+ros2 service call /ugv/stop_all ugv_interface/srv/StopAll "{stop_mode: true, stop_agent: false, stop_webrtc: false, stop_ngrok: false}"
+```
+
+**Stop only background services (keep mode running):**
+```bash
+# Stop WebRTC bridge and ngrok only
+ros2 service call /ugv/stop_all ugv_interface/srv/StopAll "{stop_mode: false, stop_agent: false, stop_webrtc: true, stop_ngrok: true}"
+
+# Stop only the transitive agent
+ros2 service call /ugv/stop_all ugv_interface/srv/StopAll "{stop_mode: false, stop_agent: true, stop_webrtc: false, stop_ngrok: false}"
+```
+
+**Stop mode and agent, but keep WebRTC/ngrok running:**
+```bash
+ros2 service call /ugv/stop_all ugv_interface/srv/StopAll "{stop_mode: true, stop_agent: true, stop_webrtc: false, stop_ngrok: false}"
 ```
 
 ### Save Map During Mapping
@@ -139,11 +167,31 @@ ros2 service call /ugv/save_map ugv_interface/srv/MapSave "{map_path: '/home/ws/
 
 ## Architecture
 
-### Persistent Agent Script
+### Background Services
+The launch manager starts and manages several background services that run independently of mode processes:
+
+#### Persistent Agent Script
 - **Path**: `~/.transitive/start_agent.sh`
-- **Lifecycle**: Starts with launch manager, runs continuously, stops with manager
+- **Lifecycle**: Starts with launch manager, runs continuously until explicitly stopped
 - **Behavior**: NOT affected by mode switches (keeps running)
 - **Logging**: Check launch manager logs for agent PID and status
+- **Stopping**: Use `/ugv/stop_all` with `stop_agent: true`
+
+#### WebRTC Bridge
+- **Purpose**: Provides video streaming via WebRTC for remote monitoring
+- **Port**: 8080
+- **Lifecycle**: Starts with launch manager, runs continuously until explicitly stopped
+- **Behavior**: NOT affected by mode switches (keeps running)
+- **Logging**: Check launch manager logs for WebRTC bridge PID and status
+- **Stopping**: Use `/ugv/stop_all` with `stop_webrtc: true`
+
+#### ngrok Tunnel
+- **Purpose**: Provides public URL access to WebRTC bridge
+- **Port**: Tunnels port 8080
+- **Lifecycle**: Starts with launch manager, runs continuously until explicitly stopped
+- **Behavior**: NOT affected by mode switches (keeps running)
+- **Logging**: Check launch manager logs for ngrok PID and status
+- **Stopping**: Use `/ugv/stop_all` with `stop_ngrok: true`
 
 ### Mode Configuration
 - **Config file**: `ugv_launch_manager/config/modes.yaml`
@@ -197,6 +245,24 @@ ros2 service call /ugv/save_map ugv_interface/srv/MapSave "{map_path: '/home/ws/
   - Added pub_odom_tf launch argument
   - Idle mode now supports full teleoperation without mapping/navigation overhead
 
+### Session 2025-11-29 Changes
+
+**Service Definition:**
+- `ugv_interface/srv/StopAll.srv` - Added selective stopping parameters:
+  - `stop_mode`: Stop the current mode process
+  - `stop_agent`: Stop the transitive agent
+  - `stop_webrtc`: Stop the WebRTC bridge
+  - `stop_ngrok`: Stop the ngrok tunnel
+  - Backwards compatible: no flags set = stop everything
+
+**Launch Manager Package:**
+- `ugv_launch_manager/ugv_launch_manager/launch_manager_node.py` - Enhanced `stop_all_callback`:
+  - Selective process stopping based on request flags
+  - Backwards compatible default behavior (stop all when no flags set)
+  - Detailed logging of which processes are being stopped
+  - Error handling for each process stop operation
+  - Informative success/error messages in response
+
 ---
 
 ## Status
@@ -207,9 +273,11 @@ ros2 service call /ugv/save_map ugv_interface/srv/MapSave "{map_path: '/home/ws/
 ✅ Idle mode with teleoperation support (camera + motor control)
 ✅ Auto-start mode on launch
 ✅ Persistent agent script integration
+✅ WebRTC bridge and ngrok background services
 ✅ Custom map path parameters
 ✅ Manual map save service (`/ugv/save_map`) implemented
 ✅ Auto-save removed for better manual control
+✅ Selective process stopping (`/ugv/stop_all` with flags)
 
 ---
 
@@ -287,6 +355,17 @@ ros2 launch ugv_launch_manager manager.launch.py
 - Ensure you're in mapping mode or provide explicit map_path
 - Verify map topic is being published: `ros2 topic echo /map --once`
 
+**Background services not stopping:**
+- Check if processes are actually running: `ps aux | grep -E "(ngrok|webrtc|start_agent)"`
+- Review launch manager logs for error messages
+- Use selective stop flags to stop individual services
+- If stuck, try stopping all: `ros2 service call /ugv/stop_all ugv_interface/srv/StopAll`
+
+**WebRTC bridge not accessible:**
+- Check if bridge is running in launch manager logs
+- Verify port 8080 is not blocked: `netstat -tuln | grep 8080`
+- Check ngrok status and public URL: `curl http://localhost:4040/api/tunnels`
+
 ---
 
 ## Full Documentation
@@ -299,8 +378,11 @@ See: `/home/ws/ugv_ws/src/ugv_main/ugv_launch_manager/README.md`
 
 - [x] Add service to manually trigger map save during mapping (✅ 2025-11-26)
 - [x] Remove auto-save for better manual control (✅ 2025-11-26)
+- [x] Add selective process stopping to stop_all service (✅ 2025-11-29)
 - [ ] Test manual save_map service with real mapping session
 - [ ] Verify agent script persistence through mode switches
 - [ ] Test custom map paths with navigation
+- [ ] Test selective stopping of background services
 - [ ] Consider adding map quality check before save
 - [ ] Add option to save multiple map snapshots during same mapping session
+- [ ] Add service to restart individual background services without restarting manager
