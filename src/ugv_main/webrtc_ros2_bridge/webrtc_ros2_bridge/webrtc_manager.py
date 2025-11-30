@@ -38,7 +38,18 @@ class WebRTCManager:
             logger: Logger instance
         """
         self._stun_servers = stun_servers or ["stun:stun.l.google.com:19302"]
-        self._turn_servers = turn_servers or []
+        self._turn_servers = turn_servers or [
+            {
+                "url": "turn:73.157.62.135:3478",
+                "username": "ugvuser",
+                "credential": "ugvpass123"
+            },
+            {
+                "url": "turn:73.157.62.135:3478?transport=tcp",
+                "username": "ugvuser",
+                "credential": "ugvpass123"
+            }
+        ]
         self._on_command = on_command
         self._on_emergency_stop = on_emergency_stop
         self._logger = logger
@@ -129,6 +140,22 @@ class WebRTCManager:
             if self._logger:
                 self._logger.info(
                     f"ICE connection state ({peer_id}): {pc.iceConnectionState}"
+                )
+
+        @pc.on("icegatheringstatechange")
+        async def on_icegatheringstatechange():
+            if self._logger:
+                self._logger.info(
+                    f"ICE gathering state ({peer_id}): {pc.iceGatheringState}"
+                )
+
+        @pc.on("icecandidate")
+        async def on_icecandidate(candidate):
+            if candidate and self._logger:
+                self._logger.info(
+                    f"ICE candidate ({peer_id}) [{candidate.type}]: "
+                    f"{candidate.protocol} {candidate.ip}:{candidate.port}"
+                    f"{' (via ' + str(candidate.relatedAddress) + ':' + str(candidate.relatedPort) + ')' if candidate.relatedAddress else ''}"
                 )
 
         # Add video track if available

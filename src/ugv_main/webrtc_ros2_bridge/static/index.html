@@ -344,18 +344,20 @@
         let ws = null;
         let pc = null;
         let dataChannel = null;
-        
+
         // State
         let isConnected = false;
         let emergencyStop = false;
         let currentVelocity = { linear: { x: 0, y: 0, z: 0 }, angular: { x: 0, y: 0, z: 0 } };
         let commandCount = 0;
         let lastCommandCountReset = Date.now();
+        let wsPingInterval = null;
         
         // Configuration
         const MAX_LINEAR_SPEED = 0.5;
         const MAX_ANGULAR_SPEED = 1.0;
         const COMMAND_RATE = 20; // Hz
+        const WS_PING_INTERVAL = 30000; // 30 seconds
         
         // DOM elements
         const statusDot = document.getElementById('statusDot');
@@ -369,8 +371,10 @@
         const joystick = document.getElementById('joystick');
         const joystickKnob = document.getElementById('joystickKnob');
         
-        // Set default server URL
-        serverUrlInput.value = `ws://${window.location.hostname || 'localhost'}:8080/ws`;
+        // Set default server URL - auto-detect protocol for HTTPS/WSS support
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const port = window.location.protocol === 'https:' ? '' : ':8080';
+        serverUrlInput.value = `${protocol}//${window.location.hostname || 'localhost'}${port}/ws`;
         
         // Update status display
         function updateStatus(status, text) {
@@ -405,6 +409,7 @@
                 
                 ws.onopen = () => {
                     console.log('WebSocket connected');
+                    startWebSocketPing();
                     createPeerConnection();
                 };
                 
@@ -436,19 +441,46 @@
             const config = {
                 iceServers: [
                     { urls: 'stun:stun.l.google.com:19302' },
-                    { urls: 'stun:stun1.l.google.com:19302' }
-                ]
+                    { urls: 'stun:stun1.l.google.com:19302' },
+                    {
+                        urls: [
+                            'turn:73.157.62.135:3478',
+                            'turn:73.157.62.135:3478?transport=tcp'
+                        ],
+                        username: 'ugvuser',
+                        credential: 'ugvpass123'
+                    }
+                ],
+                iceCandidatePoolSize: 10,  // Gather candidates more aggressively
+                iceTransportPolicy: 'all'  // Try all candidates including relay
             };
-            
+
             pc = new RTCPeerConnection(config);
-            
+
+            // Handle ICE gathering state changes
+            pc.onicegatheringstatechange = () => {
+                console.log('ICE gathering state:', pc.iceGatheringState);
+            };
+
+            // Handle ICE connection state changes
+            pc.oniceconnectionstatechange = () => {
+                console.log('ICE connection state:', pc.iceConnectionState);
+            };
+
             // Handle ICE candidates
             pc.onicecandidate = (event) => {
                 if (event.candidate) {
+                    const c = event.candidate;
+                    console.log(`ICE candidate [${c.type}]:`,
+                        c.protocol, c.address + ':' + c.port,
+                        c.relatedAddress ? `(via ${c.relatedAddress}:${c.relatedPort})` : '');
+
                     ws.send(JSON.stringify({
                         type: 'ice_candidate',
                         candidate: event.candidate
                     }));
+                } else {
+                    console.log('ICE gathering complete');
                 }
             };
             
@@ -538,22 +570,23 @@
         // Disconnect
         function disconnect() {
             stopCommandLoop();
-            
+            stopWebSocketPing();
+
             if (dataChannel) {
                 dataChannel.close();
                 dataChannel = null;
             }
-            
+
             if (pc) {
                 pc.close();
                 pc = null;
             }
-            
+
             if (ws) {
                 ws.close();
                 ws = null;
             }
-            
+
             isConnected = false;
             updateStatus('', 'Disconnected');
             connectBtn.textContent = 'Connect';
@@ -562,19 +595,51 @@
             videoElement.srcObject = null;
         }
         
+        // WebSocket keepalive ping
+        function startWebSocketPing() {
+            if (wsPingInterval) return;
+
+            // Send initial ping
+            sendWebSocketPing();
+
+            // Set up interval for periodic pings
+            wsPingInterval = setInterval(() => {
+                sendWebSocketPing();
+            }, WS_PING_INTERVAL);
+
+            console.log(`WebSocket keepalive started (${WS_PING_INTERVAL / 1000}s interval)`);
+        }
+
+        function stopWebSocketPing() {
+            if (wsPingInterval) {
+                clearInterval(wsPingInterval);
+                wsPingInterval = null;
+                console.log('WebSocket keepalive stopped');
+            }
+        }
+
+        function sendWebSocketPing() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'ping',
+                    timestamp: Date.now()
+                }));
+            }
+        }
+
         // Command loop
         let commandLoopInterval = null;
-        
+
         function startCommandLoop() {
             if (commandLoopInterval) return;
-            
+
             commandLoopInterval = setInterval(() => {
                 sendVelocityCommand();
                 measureLatency();
                 updateStats();
             }, 1000 / COMMAND_RATE);
         }
-        
+
         function stopCommandLoop() {
             if (commandLoopInterval) {
                 clearInterval(commandLoopInterval);
