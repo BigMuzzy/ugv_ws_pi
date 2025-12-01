@@ -32,6 +32,7 @@ class VideoSource:
         width=640,
         height=480,
         fps=30,
+        add_timestamp=True,
         logger=None
     ):
         """
@@ -42,12 +43,14 @@ class VideoSource:
             width: Frame width
             height: Frame height
             fps: Target frames per second
+            add_timestamp: Whether to overlay timestamp on frames for latency measurement
             logger: Logger instance for messages
         """
         self._device = device
         self._width = width
         self._height = height
         self._fps = fps
+        self._add_timestamp = add_timestamp
         self._logger = logger
 
         self._capture = None
@@ -126,8 +129,62 @@ class VideoSource:
         ret, frame = self._capture.read()
         if ret:
             self._frame_count += 1
+            if self._add_timestamp:
+                frame = self._add_timestamp_overlay(frame)
             return frame
         return None
+
+    def _add_timestamp_overlay(self, frame):
+        """
+        Add timestamp overlay to frame for latency measurement.
+
+        The timestamp is encoded as a small bar code in the top-left corner
+        that can be read by the client.
+
+        Args:
+            frame: Input frame (BGR format)
+
+        Returns:
+            Frame with timestamp overlay
+        """
+        if not CV2_AVAILABLE or frame is None:
+            return frame
+
+        # Get current timestamp in milliseconds
+        timestamp_ms = int(time.time() * 1000)
+
+        # Draw timestamp as text (visible to user)
+        text = str(timestamp_ms)
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.5
+        thickness = 1
+        color = (0, 255, 0)  # Green
+
+        # Add background rectangle for better readability
+        (text_width, text_height), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+        cv2.rectangle(frame, (5, 5), (15 + text_width, 15 + text_height), (0, 0, 0), -1)
+
+        # Draw text
+        cv2.putText(frame, text, (10, 10 + text_height), font, font_scale, color, thickness)
+
+        # Draw binary-encoded timestamp as colored bars (machine-readable)
+        # This creates a small barcode-like pattern in the top-right corner
+        bar_width = 3
+        bar_height = 20
+        x_offset = frame.shape[1] - (13 * bar_width) - 5
+        y_offset = 5
+
+        # Encode last 13 digits as bars (enough for millisecond timestamp)
+        timestamp_str = str(timestamp_ms)[-13:].zfill(13)
+
+        for i, digit in enumerate(timestamp_str):
+            # Use grayscale encoding: digit * 25 gives values 0-225
+            gray_value = int(digit) * 25
+            color_bar = (gray_value, gray_value, gray_value)
+            x = x_offset + (i * bar_width)
+            cv2.rectangle(frame, (x, y_offset), (x + bar_width - 1, y_offset + bar_height), color_bar, -1)
+
+        return frame
 
     def get_frame_rgb(self):
         """

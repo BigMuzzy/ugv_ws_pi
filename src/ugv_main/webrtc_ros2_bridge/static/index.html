@@ -272,15 +272,20 @@
                 <span id="statusText">Disconnected</span>
             </div>
             <div class="status-indicator">
-                <span>Latency: </span>
+                <span>Data: </span>
                 <span id="latency">--</span>ms
+            </div>
+            <div class="status-indicator">
+                <span>Video: </span>
+                <span id="videoLatency">--</span>ms
             </div>
         </div>
     </header>
-    
+
     <main>
         <div class="video-container">
             <video id="remoteVideo" autoplay playsinline muted></video>
+            <canvas id="latencyCanvas" style="display:none;"></canvas>
             <div class="video-overlay">
                 <span id="videoStatus">No video</span>
             </div>
@@ -363,13 +368,18 @@
         const statusDot = document.getElementById('statusDot');
         const statusText = document.getElementById('statusText');
         const latencyDisplay = document.getElementById('latency');
+        const videoLatencyDisplay = document.getElementById('videoLatency');
         const videoElement = document.getElementById('remoteVideo');
         const videoStatus = document.getElementById('videoStatus');
+        const latencyCanvas = document.getElementById('latencyCanvas');
         const serverUrlInput = document.getElementById('serverUrl');
         const connectBtn = document.getElementById('connectBtn');
         const estopBtn = document.getElementById('estopBtn');
         const joystick = document.getElementById('joystick');
         const joystickKnob = document.getElementById('joystickKnob');
+
+        // Video latency measurement
+        let videoLatencyInterval = null;
         
         // Set default server URL - auto-detect protocol for HTTPS/WSS support
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -520,6 +530,7 @@
                 if (event.track.kind === 'video') {
                     videoElement.srcObject = event.streams[0];
                     videoStatus.textContent = 'Video connected';
+                    startVideoLatencyMeasurement();
                 }
             };
             
@@ -587,6 +598,7 @@
         function disconnect() {
             stopCommandLoop();
             stopWebSocketPing();
+            stopVideoLatencyMeasurement();
 
             if (dataChannel) {
                 dataChannel.close();
@@ -609,6 +621,78 @@
             connectBtn.disabled = false;
             videoStatus.textContent = 'No video';
             videoElement.srcObject = null;
+            videoLatencyDisplay.textContent = '--';
+        }
+
+        // Video latency measurement using timestamp barcode
+        function startVideoLatencyMeasurement() {
+            if (videoLatencyInterval) return;
+
+            // Set canvas size to match video
+            latencyCanvas.width = 640;
+            latencyCanvas.height = 480;
+
+            videoLatencyInterval = setInterval(() => {
+                measureVideoLatency();
+            }, 100); // Measure every 100ms
+        }
+
+        function stopVideoLatencyMeasurement() {
+            if (videoLatencyInterval) {
+                clearInterval(videoLatencyInterval);
+                videoLatencyInterval = null;
+            }
+        }
+
+        function measureVideoLatency() {
+            if (!videoElement || !videoElement.videoWidth || videoElement.videoWidth === 0) {
+                return;
+            }
+
+            try {
+                const ctx = latencyCanvas.getContext('2d');
+
+                // Draw current video frame to canvas
+                ctx.drawImage(videoElement, 0, 0, latencyCanvas.width, latencyCanvas.height);
+
+                // Read the timestamp barcode from top-right corner
+                const barWidth = 3;
+                const barHeight = 20;
+                const xOffset = latencyCanvas.width - (13 * barWidth) - 5;
+                const yOffset = 5;
+
+                let timestampStr = '';
+
+                // Read each bar and decode the digit
+                for (let i = 0; i < 13; i++) {
+                    const x = xOffset + (i * barWidth);
+                    const y = yOffset + Math.floor(barHeight / 2);
+
+                    // Get pixel data for the middle of the bar
+                    const imageData = ctx.getImageData(x, y, 1, 1);
+                    const grayValue = imageData.data[0]; // R value (same as G and B for grayscale)
+
+                    // Decode: gray_value = digit * 25, so digit = gray_value / 25
+                    const digit = Math.round(grayValue / 25);
+                    timestampStr += digit;
+                }
+
+                // Parse the timestamp
+                const frameTimestamp = parseInt(timestampStr, 10);
+
+                if (!isNaN(frameTimestamp) && frameTimestamp > 0) {
+                    const currentTime = Date.now();
+                    const latency = currentTime - frameTimestamp;
+
+                    // Only display reasonable latency values (0-5000ms)
+                    if (latency >= 0 && latency < 5000) {
+                        videoLatencyDisplay.textContent = latency;
+                    }
+                }
+            } catch (error) {
+                // Silently fail - video might not be ready yet
+                console.debug('Video latency measurement error:', error);
+            }
         }
         
         // WebSocket keepalive ping
