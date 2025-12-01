@@ -440,16 +440,32 @@
         async function createPeerConnection() {
             const config = {
                 iceServers: [
+                    // Google STUN servers
                     { urls: 'stun:stun.l.google.com:19302' },
                     { urls: 'stun:stun1.l.google.com:19302' },
+                    // Metered.ca STUN server
+                    { urls: 'stun:stun.relay.metered.ca:80' },
+                    // Metered.ca TURN servers (free tier) - multiple transports for maximum compatibility
+                    // https://www.metered.ca/tools/openrelay/
                     {
                         urls: [
-                            'turn:73.157.62.135:3478',
-                            'turn:73.157.62.135:3478?transport=tcp'
+                            'turn:global.relay.metered.ca:80',
+                            'turn:global.relay.metered.ca:80?transport=tcp',
+                            'turn:global.relay.metered.ca:443',
+                            'turns:global.relay.metered.ca:443?transport=tcp'
                         ],
-                        username: 'ugvuser',
-                        credential: 'ugvpass123'
+                        username: 'bbded4f052d4c3c9e8e6342f',
+                        credential: 'UWI3yEJTIVm+nT0J'
                     }
+                    // Old TURN server configuration (commented out for reference)
+                    // {
+                    //     urls: [
+                    //         'turn:73.157.62.135:3478',
+                    //         'turn:73.157.62.135:3478?transport=tcp'
+                    //     ],
+                    //     username: 'ugvuser',
+                    //     credential: 'ugvpass123'
+                    // }
                 ],
                 iceCandidatePoolSize: 10,  // Gather candidates more aggressively
                 iceTransportPolicy: 'all'  // Try all candidates including relay

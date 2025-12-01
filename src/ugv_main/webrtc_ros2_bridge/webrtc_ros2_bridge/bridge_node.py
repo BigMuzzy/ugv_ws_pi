@@ -174,8 +174,34 @@ class WebRTCBridgeNode(Node):
                 "publish_rate_hz": self.get_parameter("robot.publish_rate_hz").value,
             },
             "webrtc": {
-                "stun_servers": ["stun:stun.l.google.com:19302"],
-                "turn_servers": [],
+                "stun_servers": [
+                    "stun:stun.l.google.com:19302",
+                    "stun:stun1.l.google.com:19302",
+                    "stun:stun.relay.metered.ca:80"
+                ],
+                # Metered.ca TURN servers (free tier) for NAT traversal
+                "turn_servers": [
+                    {
+                        "url": "turn:global.relay.metered.ca:80",
+                        "username": "bbded4f052d4c3c9e8e6342f",
+                        "credential": "UWI3yEJTIVm+nT0J"
+                    },
+                    {
+                        "url": "turn:global.relay.metered.ca:80?transport=tcp",
+                        "username": "bbded4f052d4c3c9e8e6342f",
+                        "credential": "UWI3yEJTIVm+nT0J"
+                    },
+                    {
+                        "url": "turn:global.relay.metered.ca:443",
+                        "username": "bbded4f052d4c3c9e8e6342f",
+                        "credential": "UWI3yEJTIVm+nT0J"
+                    },
+                    {
+                        "url": "turns:global.relay.metered.ca:443?transport=tcp",
+                        "username": "bbded4f052d4c3c9e8e6342f",
+                        "credential": "UWI3yEJTIVm+nT0J"
+                    }
+                ],
             }
         }
 
