@@ -68,6 +68,7 @@ class SignalingServer:
             turn_servers=webrtc_config.get("turn_servers"),
             on_command=on_command,
             on_emergency_stop=on_emergency_stop,
+            on_ice_candidate=self._on_ice_candidate,
             logger=logger
         )
 
@@ -99,7 +100,7 @@ class SignalingServer:
 
         # Serve static files if directory is specified
         if self._static_dir and os.path.isdir(self._static_dir):
-            self._app.router.add_static("/", self._static_dir)
+            self._app.router.add_static("/", self._static_dir, follow_symlinks=True)
             self._app.router.add_get("/", self._index_handler)
 
         # Start server
@@ -147,6 +148,21 @@ class SignalingServer:
             "peers": self._webrtc_manager.peer_count,
             "video": self._video_source.is_running
         })
+
+    def _on_ice_candidate(self, peer_id, candidate):
+        """
+        Handle ICE candidate from WebRTC manager and send to client.
+
+        Args:
+            peer_id: Peer identifier
+            candidate: ICE candidate data
+        """
+        if peer_id in self._websockets:
+            ws = self._websockets[peer_id]
+            asyncio.create_task(ws.send_json({
+                "type": "ice_candidate",
+                "candidate": candidate
+            }))
 
     async def _offer_handler(self, request):
         """Handle HTTP POST for SDP offer."""

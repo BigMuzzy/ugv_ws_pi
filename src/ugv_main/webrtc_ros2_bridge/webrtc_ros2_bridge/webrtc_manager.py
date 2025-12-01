@@ -25,6 +25,7 @@ class WebRTCManager:
         turn_servers=None,
         on_command=None,
         on_emergency_stop=None,
+        on_ice_candidate=None,
         logger=None
     ):
         """
@@ -35,28 +36,59 @@ class WebRTCManager:
             turn_servers: List of TURN server configurations
             on_command: Callback for velocity commands
             on_emergency_stop: Callback for emergency stop
+            on_ice_candidate: Callback when ICE candidate is generated
             logger: Logger instance
         """
-        self._stun_servers = stun_servers or ["stun:stun.l.google.com:19302"]
+        self._stun_servers = stun_servers or [
+            "stun:stun.l.google.com:19302",
+            "stun:stun1.l.google.com:19302",
+            "stun:stun.relay.metered.ca:80"
+        ]
+        # Metered.ca TURN servers (free tier)
+        # https://www.metered.ca/tools/openrelay/
         self._turn_servers = turn_servers or [
+            # Metered.ca TURN servers with multiple transports for maximum compatibility
             {
-                "url": "turn:73.157.62.135:3478",
-                "username": "ugvuser",
-                "credential": "ugvpass123"
+                "url": "turn:global.relay.metered.ca:80",
+                "username": "bbded4f052d4c3c9e8e6342f",
+                "credential": "UWI3yEJTIVm+nT0J"
             },
             {
-                "url": "turn:73.157.62.135:3478?transport=tcp",
-                "username": "ugvuser",
-                "credential": "ugvpass123"
+                "url": "turn:global.relay.metered.ca:80?transport=tcp",
+                "username": "bbded4f052d4c3c9e8e6342f",
+                "credential": "UWI3yEJTIVm+nT0J"
+            },
+            {
+                "url": "turn:global.relay.metered.ca:443",
+                "username": "bbded4f052d4c3c9e8e6342f",
+                "credential": "UWI3yEJTIVm+nT0J"
+            },
+            {
+                "url": "turns:global.relay.metered.ca:443?transport=tcp",
+                "username": "bbded4f052d4c3c9e8e6342f",
+                "credential": "UWI3yEJTIVm+nT0J"
             }
+            # Old TURN server configuration (commented out for reference)
+            # {
+            #     "url": "turn:73.157.62.135:3478",
+            #     "username": "ugvuser",
+            #     "credential": "ugvpass123"
+            # },
+            # {
+            #     "url": "turn:73.157.62.135:3478?transport=tcp",
+            #     "username": "ugvuser",
+            #     "credential": "ugvpass123"
+            # }
         ]
         self._on_command = on_command
         self._on_emergency_stop = on_emergency_stop
+        self._on_ice_candidate = on_ice_candidate
         self._logger = logger
 
         self._peer_connections = {}
         self._data_channels = {}
         self._video_track = None
+        self._pending_candidates = {}
 
         if AIORTC_AVAILABLE:
             self._relay = MediaRelay()
@@ -151,12 +183,20 @@ class WebRTCManager:
 
         @pc.on("icecandidate")
         async def on_icecandidate(candidate):
-            if candidate and self._logger:
-                self._logger.info(
-                    f"ICE candidate ({peer_id}) [{candidate.type}]: "
-                    f"{candidate.protocol} {candidate.ip}:{candidate.port}"
-                    f"{' (via ' + str(candidate.relatedAddress) + ':' + str(candidate.relatedPort) + ')' if candidate.relatedAddress else ''}"
-                )
+            if candidate:
+                if self._logger:
+                    self._logger.info(
+                        f"ICE candidate ({peer_id}) [{candidate.type}]: "
+                        f"{candidate.protocol} {candidate.ip}:{candidate.port}"
+                        f"{' (via ' + str(candidate.relatedAddress) + ':' + str(candidate.relatedPort) + ')' if candidate.relatedAddress else ''}"
+                    )
+                # Send ICE candidate to client
+                if self._on_ice_candidate:
+                    self._on_ice_candidate(peer_id, {
+                        "candidate": candidate.candidate,
+                        "sdpMid": candidate.sdpMid,
+                        "sdpMLineIndex": candidate.sdpMLineIndex
+                    })
 
         # Add video track if available
         if self._video_track and self._relay:
@@ -167,6 +207,11 @@ class WebRTCManager:
     def _setup_data_channel(self, peer_id, channel):
         """Set up data channel event handlers."""
         self._data_channels[peer_id] = channel
+
+        @channel.on("open")
+        def on_open():
+            if self._logger:
+                self._logger.info(f"Data channel '{channel.label}' opened for peer {peer_id}")
 
         @channel.on("message")
         def on_message(message):
@@ -187,9 +232,9 @@ class WebRTCManager:
             msg_type = data.get("type", "")
 
             if msg_type == "cmd_vel":
+                linear = data.get("linear", {})
+                angular = data.get("angular", {})
                 if self._on_command:
-                    linear = data.get("linear", {})
-                    angular = data.get("angular", {})
                     self._on_command(
                         linear.get("x", 0),
                         linear.get("y", 0),
@@ -242,6 +287,23 @@ class WebRTCManager:
         offer = RTCSessionDescription(sdp=sdp, type="offer")
         await pc.setRemoteDescription(offer)
 
+        # Process any pending ICE candidates
+        if peer_id in self._pending_candidates:
+            from aiortc.sdp import candidate_from_sdp
+            for candidate_data in self._pending_candidates[peer_id]:
+                try:
+                    candidate_str = candidate_data.get("candidate", "")
+                    if candidate_str:
+                        ice_candidate = candidate_from_sdp(candidate_str)
+                        ice_candidate.sdpMid = candidate_data.get("sdpMid")
+                        ice_candidate.sdpMLineIndex = candidate_data.get("sdpMLineIndex")
+                        await pc.addIceCandidate(ice_candidate)
+                except Exception as e:
+                    if self._logger:
+                        self._logger.error(f"Error adding pending candidate: {e}")
+            # Clear pending candidates
+            del self._pending_candidates[peer_id]
+
         # Create and set local description
         answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
@@ -254,7 +316,7 @@ class WebRTCManager:
 
         Args:
             peer_id: Peer identifier
-            candidate: ICE candidate data
+            candidate: ICE candidate data (dict with candidate, sdpMid, sdpMLineIndex)
         """
         if not AIORTC_AVAILABLE:
             return
@@ -262,11 +324,35 @@ class WebRTCManager:
         if peer_id not in self._peer_connections:
             if self._logger:
                 self._logger.warning(f"Unknown peer for ICE candidate: {peer_id}")
+            # Store candidate for later if connection not yet established
+            if peer_id not in self._pending_candidates:
+                self._pending_candidates[peer_id] = []
+            self._pending_candidates[peer_id].append(candidate)
             return
 
-        # aiortc handles ICE candidates automatically through the offer/answer
-        # exchange, so this is mainly for completeness
-        pass
+        pc = self._peer_connections[peer_id]
+
+        # Add the ICE candidate
+        try:
+            if pc.remoteDescription:
+                from aiortc.sdp import candidate_from_sdp
+                # Parse the candidate string to create RTCIceCandidate
+                candidate_str = candidate.get("candidate", "")
+                if candidate_str:
+                    ice_candidate = candidate_from_sdp(candidate_str)
+                    ice_candidate.sdpMid = candidate.get("sdpMid")
+                    ice_candidate.sdpMLineIndex = candidate.get("sdpMLineIndex")
+                    await pc.addIceCandidate(ice_candidate)
+                    if self._logger:
+                        self._logger.debug(f"Added ICE candidate for peer {peer_id}")
+            else:
+                # Queue candidate until remote description is set
+                if peer_id not in self._pending_candidates:
+                    self._pending_candidates[peer_id] = []
+                self._pending_candidates[peer_id].append(candidate)
+        except Exception as e:
+            if self._logger:
+                self._logger.error(f"Error adding ICE candidate: {e}")
 
     def send_to_peer(self, peer_id, data):
         """
