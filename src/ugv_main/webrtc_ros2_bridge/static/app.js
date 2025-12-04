@@ -130,7 +130,11 @@ async function connect() {
  * Create WebRTC peer connection
  */
 async function createPeerConnection() {
-    const config = getWebRTCConfig();
+    // Extract base URL from WebSocket URL for ICE servers endpoint
+    const wsUrl = new URL(serverUrlInput.value);
+    const backendUrl = `${wsUrl.protocol === 'wss:' ? 'https:' : 'http:'}//${wsUrl.host}`;
+    
+    const config = await getWebRTCConfig(backendUrl);
 
     pc = new RTCPeerConnection(config);
 

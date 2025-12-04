@@ -2,131 +2,69 @@
  * WebRTC Configuration
  * 
  * This file contains ICE server configurations for WebRTC connections.
- * You can easily switch between different STUN/TURN providers by
- * uncommenting the desired configuration.
+ * Configurations are fetched dynamically from the backend to ensure
+ * secure credential management.
  */
 
 /**
  * Get the WebRTC configuration for peer connection
- * @returns {RTCConfiguration} WebRTC peer connection configuration
+ * @param {string} backendUrl - The backend URL to fetch credentials from
+ * @returns {Promise<RTCConfiguration>} WebRTC peer connection configuration
  */
-function getWebRTCConfig() {
+async function getWebRTCConfig(backendUrl) {
+    const iceServers = await fetchICEServersFromBackend(backendUrl);
+    
     return {
-        iceServers: getICEServers(),
+        iceServers: iceServers,
         iceCandidatePoolSize: 10,  // Gather candidates more aggressively
         iceTransportPolicy: 'all'  // Try all candidates including relay
     };
 }
 
 /**
- * Get ICE servers configuration
- * @returns {RTCIceServer[]} Array of ICE server configurations
+ * Fetch ICE servers from backend
+ * @param {string} backendUrl - The backend URL
+ * @returns {Promise<RTCIceServer[]>} Array of ICE server configurations
  */
-function getICEServers() {
-    // Choose your preferred configuration by uncommenting one of the options below
-    
-    // Option 1: Metered.ca (Free tier with TURN support) - ACTIVE
-    return getMeteredConfig();
-    
-    // Option 2: Google STUN only (No TURN support)
-    // return getGoogleSTUNConfig();
-    
-    // Option 3: Custom TURN server
-    // return getCustomTURNConfig();
-    
-    // Option 4: Multiple providers (Redundancy)
-    // return getMultiProviderConfig();
-}
+async function fetchICEServersFromBackend(backendUrl) {
+    try {
+        const response = await fetch(`${backendUrl}/ice-servers`, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
 
-/**
- * Metered.ca configuration (Free tier)
- * Provides both STUN and TURN servers with multiple transports
- * https://www.metered.ca/tools/openrelay/
- */
-function getMeteredConfig() {
-    return [
-        // Google STUN servers (fallback)
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        
-        // Metered.ca STUN server
-        { urls: 'stun:stun.relay.metered.ca:80' },
-        
-        // Metered.ca TURN servers with multiple transports
-        {
-            urls: [
-                'turn:global.relay.metered.ca:80',
-                'turn:global.relay.metered.ca:80?transport=tcp',
-                'turn:global.relay.metered.ca:443',
-                'turns:global.relay.metered.ca:443?transport=tcp'
-            ],
-            username: 'bbded4f052d4c3c9e8e6342f',
-            credential: 'UWI3yEJTIVm+nT0J'
+        if (!response.ok) {
+            console.warn('Failed to fetch ICE servers from backend, using fallback');
+            return getFallbackConfig();
         }
-    ];
-}
 
-/**
- * Google STUN only configuration
- * Simple, reliable STUN servers but no TURN (relay) support
- * Works well for direct connections but may fail behind strict NATs
- */
-function getGoogleSTUNConfig() {
-    return [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' },
-        { urls: 'stun:stun3.l.google.com:19302' },
-        { urls: 'stun:stun4.l.google.com:19302' }
-    ];
-}
-
-/**
- * Custom TURN server configuration
- * Use this if you're hosting your own TURN server (coturn, etc.)
- */
-function getCustomTURNConfig() {
-    return [
-        // Public STUN servers
-        { urls: 'stun:stun.l.google.com:19302' },
+        const data = await response.json();
         
-        // Your custom TURN server
-        {
-            urls: [
-                'turn:YOUR_SERVER_IP:3478',
-                'turn:YOUR_SERVER_IP:3478?transport=tcp'
-            ],
-            username: 'your_username',
-            credential: 'your_password'
+        // Backend should return: { iceServers: [...] }
+        if (data.iceServers && Array.isArray(data.iceServers)) {
+            console.log('Using ICE servers from backend');
+            return data.iceServers;
+        } else {
+            console.warn('Invalid ICE server response format, using fallback');
+            return getFallbackConfig();
         }
-    ];
+    } catch (error) {
+        console.error('Error fetching ICE servers:', error);
+        console.log('Using fallback configuration');
+        return getFallbackConfig();
+    }
 }
 
 /**
- * Multi-provider configuration
- * Uses multiple providers for redundancy
- * Browser will try servers in order until connection succeeds
+ * Fallback configuration if backend is unavailable
+ * Uses public STUN servers (no TURN support)
  */
-function getMultiProviderConfig() {
+function getFallbackConfig() {
     return [
-        // Google STUN (always available)
         { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        
-        // Metered.ca TURN
-        { urls: 'stun:stun.relay.metered.ca:80' },
-        {
-            urls: [
-                'turn:global.relay.metered.ca:80',
-                'turn:global.relay.metered.ca:80?transport=tcp',
-                'turn:global.relay.metered.ca:443',
-                'turns:global.relay.metered.ca:443?transport=tcp'
-            ],
-            username: 'bbded4f052d4c3c9e8e6342f',
-            credential: 'UWI3yEJTIVm+nT0J'
-        },
-        
-        // Add more providers here as needed
+        { urls: 'stun:stun1.l.google.com:19302' }
     ];
 }
 

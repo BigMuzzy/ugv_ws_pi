@@ -14,6 +14,7 @@ except ImportError:
 # Import WebRTC manager and video source
 from .webrtc_manager import WebRTCManager, AIORTC_AVAILABLE
 from .video_source import VideoSource, VideoStreamTrack
+from .cloudflare_turn import CloudflareTURNProvider
 
 
 class SignalingServer:
@@ -76,6 +77,9 @@ class SignalingServer:
         self._runner = None
         self._site = None
         self._websockets = {}
+        
+        # Initialize Cloudflare TURN provider
+        self._turn_provider = CloudflareTURNProvider(logger=logger)
 
     async def start(self):
         """Start the signaling server."""
@@ -97,6 +101,7 @@ class SignalingServer:
         self._app.router.add_get("/ws", self._websocket_handler)
         self._app.router.add_post("/offer", self._offer_handler)
         self._app.router.add_get("/health", self._health_handler)
+        self._app.router.add_get("/ice-servers", self._ice_servers_handler)
 
         # Serve static files if directory is specified
         if self._static_dir and os.path.isdir(self._static_dir):
@@ -148,6 +153,28 @@ class SignalingServer:
             "peers": self._webrtc_manager.peer_count,
             "video": self._video_source.is_running
         })
+
+    async def _ice_servers_handler(self, request):
+        """
+        ICE servers endpoint - provides STUN/TURN configuration.
+        
+        Returns dynamically generated credentials from Cloudflare.
+        """
+        try:
+            ice_servers = self._turn_provider.get_ice_servers()
+            return web.json_response({
+                "iceServers": ice_servers
+            })
+        except Exception as e:
+            if self._logger:
+                self._logger.error(f"Error getting ICE servers: {e}")
+            # Return fallback config on error
+            return web.json_response({
+                "iceServers": [
+                    {'urls': 'stun:stun.l.google.com:19302'},
+                    {'urls': 'stun:stun1.l.google.com:19302'}
+                ]
+            })
 
     def _on_ice_candidate(self, peer_id, candidate):
         """
