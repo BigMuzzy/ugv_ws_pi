@@ -1,4 +1,5 @@
 """Cloudflare TURN API integration."""
+import json
 import os
 import time
 import requests
@@ -43,7 +44,7 @@ class CloudflareTURNProvider:
         # Check if we have valid cached credentials
         if self._cached_credentials and time.time() < self._cache_expiry:
             if self._logger:
-                self._logger.debug("Using cached Cloudflare TURN credentials")
+                self._logger.info("Using cached Cloudflare TURN credentials")
             return self._cached_credentials
 
         # Fetch new credentials
@@ -99,6 +100,9 @@ class CloudflareTURNProvider:
             response.raise_for_status()
             
             data = response.json()
+            
+            if self._logger:
+                self._logger.info(f"Cloudflare API response: {json.dumps(data, indent=2)}")
             
             # Cloudflare returns { "iceServers": [...] }
             if 'iceServers' in data:

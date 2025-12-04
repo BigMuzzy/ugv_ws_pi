@@ -64,9 +64,34 @@ class SignalingServer:
 
         # WebRTC configuration
         webrtc_config = webrtc_config or {}
+        
+        # Initialize Cloudflare TURN provider first
+        self._turn_provider = CloudflareTURNProvider(logger=logger)
+        
+        # Get initial ICE servers from Cloudflare
+        ice_servers_config = self._turn_provider.get_ice_servers()
+        
+        # Extract STUN and TURN servers from ICE servers
+        stun_servers = []
+        turn_servers = []
+        for server in ice_servers_config:
+            urls = server.get('urls', [])
+            if isinstance(urls, str):
+                urls = [urls]
+            
+            for url in urls:
+                if url.startswith('stun:'):
+                    stun_servers.append(url)
+                elif url.startswith('turn:') or url.startswith('turns:'):
+                    turn_servers.append({
+                        'url': url,
+                        'username': server.get('username', ''),
+                        'credential': server.get('credential', '')
+                    })
+        
         self._webrtc_manager = WebRTCManager(
-            stun_servers=webrtc_config.get("stun_servers"),
-            turn_servers=webrtc_config.get("turn_servers"),
+            stun_servers=stun_servers or webrtc_config.get("stun_servers"),
+            turn_servers=turn_servers or webrtc_config.get("turn_servers"),
             on_command=on_command,
             on_emergency_stop=on_emergency_stop,
             on_ice_candidate=self._on_ice_candidate,
@@ -78,8 +103,6 @@ class SignalingServer:
         self._site = None
         self._websockets = {}
         
-        # Initialize Cloudflare TURN provider
-        self._turn_provider = CloudflareTURNProvider(logger=logger)
 
     async def start(self):
         """Start the signaling server."""
