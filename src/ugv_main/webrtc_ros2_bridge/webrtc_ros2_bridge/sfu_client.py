@@ -124,6 +124,20 @@ class CloudflareSFUClient:
             # Step 2: Create RTCPeerConnection with ICE servers
             await self._create_peer_connection()
 
+            # Explicitly create the DataChannel to ensure the track is active
+            if self._logger:
+                self._logger.info("Creating 'commands' DataChannel")
+            self._data_channel = self._pc.createDataChannel("commands")
+            
+            @self._data_channel.on("open")
+            def on_open():
+                if self._logger:
+                    self._logger.info("DataChannel 'commands' is open")
+
+            @self._data_channel.on("message")
+            def on_message(message):
+                self._handle_command_message(message)
+
             # Step 3: Create offer and send to SFU
             await self._create_and_send_offer()
 
@@ -219,31 +233,13 @@ class CloudflareSFUClient:
             if self._logger:
                 self._logger.info(f"Received data channel: {channel.label}")
             
+            # If we already have a channel (created by us), we might ignore this or use it as backup
+            # For now, let's accept it as it might be the loopback from SFU or another peer
             self._data_channel = channel
             
             @channel.on("message")
             def on_message(message):
-                """Handle incoming command messages."""
-                try:
-                    data = json.loads(message)
-                    msg_type = data.get('type')
-                    
-                    if msg_type == 'command':
-                        linear = data.get('linear', 0.0)
-                        angular = data.get('angular', 0.0)
-                        if self._on_command:
-                            self._on_command(linear, angular)
-                    
-                    elif msg_type == 'emergency_stop':
-                        if self._on_emergency_stop:
-                            self._on_emergency_stop()
-                    
-                except json.JSONDecodeError:
-                    if self._logger:
-                        self._logger.warning(f"Invalid JSON message: {message}")
-                except Exception as e:
-                    if self._logger:
-                        self._logger.error(f"Error handling message: {e}")
+                self._handle_command_message(message)
 
         # Add video track if available
         if self._video_track:
@@ -260,6 +256,29 @@ class CloudflareSFUClient:
         else:
             if self._logger:
                 self._logger.warning("No video track available - SDP will have no media sections")
+
+    def _handle_command_message(self, message):
+        """Handle incoming command messages."""
+        try:
+            data = json.loads(message)
+            msg_type = data.get('type')
+            
+            if msg_type == 'command':
+                linear = data.get('linear', 0.0)
+                angular = data.get('angular', 0.0)
+                if self._on_command:
+                    self._on_command(linear, angular)
+            
+            elif msg_type == 'emergency_stop':
+                if self._on_emergency_stop:
+                    self._on_emergency_stop()
+            
+        except json.JSONDecodeError:
+            if self._logger:
+                self._logger.warning(f"Invalid JSON message: {message}")
+        except Exception as e:
+            if self._logger:
+                self._logger.error(f"Error handling message: {e}")
 
     async def _create_and_send_offer(self):
         """Create offer and send to SFU via Workers API."""
