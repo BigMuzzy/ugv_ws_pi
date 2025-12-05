@@ -279,11 +279,11 @@ class WebRTCBridgeNode(Node):
                 self._init_p2p_mode(video_config, webrtc_config, server_config)
             return
 
-        robot_id = sfu_config.get(\"robot_id\", \"robot_01\")
-        workers_endpoint = sfu_config.get(\"workers_endpoint\", \"https://fleet-workers.mssemyonov.workers.dev\")
+        robot_id = sfu_config.get("robot_id", "robot_01")
+        workers_endpoint = sfu_config.get("workers_endpoint", "https://fleet-workers.mssemyonov.workers.dev")
         
-        self.get_logger().info(f\"Initializing SFU client for robot: {robot_id}\")
-        self.get_logger().info(f\"Workers endpoint: {workers_endpoint}\")
+        self.get_logger().info(f"Initializing SFU client for robot: {robot_id}")
+        self.get_logger().info(f"Workers endpoint: {workers_endpoint}")
         
         # Note: Video track will be set up in async loop after VideoSource is created
         self._sfu_client = CloudflareSFUClient(
@@ -301,15 +301,15 @@ class WebRTCBridgeNode(Node):
         self._sfu_config = sfu_config
 
     def _init_p2p_mode(self, video_config, webrtc_config, server_config):
-        \"\"\"Initialize P2P mode with signaling server.\"\"\"
+        """Initialize P2P mode with signaling server."""
         # Get static files directory
         static_dir = self._get_static_dir()
 
         # Initialize signaling server
         if AIOHTTP_AVAILABLE:
             self._server = SignalingServer(
-                host=server_config.get(\"host\", \"0.0.0.0\"),
-                port=server_config.get(\"port\", 8080),
+                host=server_config.get("host", "0.0.0.0"),
+                port=server_config.get("port", 8080),
                 static_dir=static_dir,
                 on_command=self._on_command,
                 on_emergency_stop=self._on_emergency_stop,
@@ -337,9 +337,9 @@ class WebRTCBridgeNode(Node):
                 async def connect_sfu():
                     success = await self._sfu_client.connect()
                     if not success:
-                        self.get_logger().error(\"Failed to connect to SFU\")
-                        if self._sfu_config.get(\"fallback_to_p2p\", True):
-                            self.get_logger().warning(\"Falling back to P2P mode\")
+                        self.get_logger().error("Failed to connect to SFU")
+                        if self._sfu_config.get("fallback_to_p2p", True):
+                            self.get_logger().warning("Falling back to P2P mode")
                             # TODO: Implement P2P fallback here
                 
                 self._loop.run_until_complete(connect_sfu())
@@ -351,7 +351,7 @@ class WebRTCBridgeNode(Node):
         self._loop_thread.start()
 
     def _on_sfu_command(self, linear, angular):
-        \"\"\"Handle velocity command from SFU DataChannel.\"\"\"
+        """Handle velocity command from SFU DataChannel."""
         # SFU sends simplified commands (linear, angular only)
         self._command_handler.process_command(
             linear, 0.0, 0.0,  # linear x, y, z
@@ -359,7 +359,7 @@ class WebRTCBridgeNode(Node):
         )
 
     def _on_sfu_emergency_stop(self):
-        \"\"\"Handle emergency stop from SFU.\"\"\"
+        """Handle emergency stop from SFU."""
         self._command_handler.set_emergency_stop(True)
 
     def _on_command(self, linear_x, linear_y, linear_z,
