@@ -57,10 +57,7 @@ export class SFUClient {
       // Step 2: Create peer connection with ICE servers
       this.createPeerConnection(this.sessionInfo.iceServers);
 
-      // Step 3: Create data channel for commands
-      this.createDataChannel();
-
-      // Step 4: Create offer
+      // Step 3: Create offer
       const offer = await this.pc!.createOffer();
       await this.pc!.setLocalDescription(offer);
 
@@ -167,17 +164,20 @@ export class SFUClient {
         // TODO: Send ICE candidate to SFU via Workers
       }
     };
+
+    // Handle incoming data channel
+    this.pc.ondatachannel = (event) => {
+      this.log('info', `Received data channel: ${event.channel.label}`);
+      this.dataChannel = event.channel;
+      this.setupDataChannelHandlers();
+    };
   }
 
   /**
-   * Create data channel for commands
+   * Setup handlers for data channel
    */
-  private createDataChannel(): void {
-    if (!this.pc) return;
-
-    this.dataChannel = this.pc.createDataChannel('commands', {
-      ordered: true
-    });
+  private setupDataChannelHandlers(): void {
+    if (!this.dataChannel) return;
 
     this.dataChannel.onopen = () => {
       this.log('info', 'Data channel opened');
@@ -215,7 +215,7 @@ export class SFUClient {
     }
 
     try {
-      const url = `${this.config.workersEndpoint}/api/sessions/${this.config.robotId}/offer`;
+      const url = `${this.config.workersEndpoint}/api/sessions/${this.config.robotId}/pull`;
       const response = await fetch(url, {
         method: 'POST',
         headers: {
