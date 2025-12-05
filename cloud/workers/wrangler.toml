@@ -1,0 +1,40 @@
+name = "fleet-workers"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+
+# Account details (update with your account ID)
+# account_id = "6819d54ac674702450084857ea917b31"
+
+# KV namespace for robot registry (Phase 1)
+[[kv_namespaces]]
+binding = "ROBOT_REGISTRY"
+id = "7d677d8d580d4979854257b0dcc7d57b"
+
+# Durable Objects
+# [[durable_objects.bindings]]
+# name = "ROBOT_CONNECTION"
+# class_name = "RobotConnection"
+# script_name = "fleet-workers"
+
+# [[migrations]]
+# tag = "v1"
+# new_classes = ["RobotConnection"]
+
+# Environment variables (use secrets for sensitive data)
+[vars]
+ENVIRONMENT = "development"
+
+# Production environment
+[env.production]
+name = "fleet-workers-production"
+# [[env.production.kv_namespaces]]
+# binding = "ROBOT_REGISTRY"
+# id = "your-production-kv-id"
+[env.production.vars]
+ENVIRONMENT = "production"
+
+# Staging environment
+[env.staging]
+name = "fleet-workers-staging"
+[env.staging.vars]
+ENVIRONMENT = "staging"

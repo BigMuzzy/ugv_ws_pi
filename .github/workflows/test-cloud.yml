@@ -1,0 +1,67 @@
+name: Test Cloud Components
+
+on:
+  pull_request:
+    paths:
+      - 'cloud/**'
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'cloud/**'
+
+jobs:
+  test-workers:
+    runs-on: ubuntu-latest
+    name: Test Workers
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: cloud/workers/package-lock.json
+
+      - name: Install dependencies
+        working-directory: cloud/workers
+        run: npm ci
+
+      - name: Run TypeScript checks
+        working-directory: cloud/workers
+        run: npm run types
+
+      # Add unit tests when available
+      # - name: Run tests
+      #   working-directory: cloud/workers
+      #   run: npm test
+
+  test-frontend:
+    runs-on: ubuntu-latest
+    name: Test Frontend
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: cloud/frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: cloud/frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: cloud/frontend
+        run: npm run build
+
+      # Add unit tests when available
+      # - name: Run tests
+      #   working-directory: cloud/frontend
+      #   run: npm test

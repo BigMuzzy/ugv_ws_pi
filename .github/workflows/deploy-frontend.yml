@@ -1,0 +1,47 @@
+name: Deploy Frontend
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'cloud/frontend/**'
+      - 'cloud/shared/**'
+      - '.github/workflows/deploy-frontend.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy to Cloudflare Pages
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: cloud/frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: cloud/frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: cloud/frontend
+        run: npm run build
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy cloud/frontend/dist/fleet-console --project-name=fleet-console
+
+      - name: Notify deployment
+        if: success()
+        run: |
+          echo "Frontend deployed successfully to Cloudflare Pages"
+          # Add webhook notification here if needed (Discord, Slack, etc.)

@@ -1,0 +1,51 @@
+# WebRTC ROS2 Bridge - SFU Mode Configuration
+# Configuration for connecting to Cloudflare Calls via Workers
+
+# SFU (Cloudflare Calls) Configuration
+sfu:
+  enabled: true
+  robot_id: "robot_01"  # Change this to unique ID for each robot
+  workers_endpoint: "https://fleet-workers.mssemyonov.workers.dev"
+  fallback_to_p2p: true  # Fallback to P2P mode if SFU connection fails
+
+# Server configuration (used only in P2P mode)
+server:
+  host: "0.0.0.0"
+  port: 8080
+
+# Video capture configuration
+video:
+  device: "/dev/video0"
+  width: 640
+  height: 480
+  fps: 30
+
+# Robot configuration
+robot:
+  cmd_vel_topic: "/cmd_vel"
+  max_linear_speed: 1.0  # m/s
+  max_angular_speed: 2.0  # rad/s
+  command_timeout_ms: 500
+  publish_rate_hz: 20
+
+# WebRTC configuration (used for both SFU and P2P modes)
+webrtc:
+  stun_servers:
+    - "stun:stun.l.google.com:19302"
+    - "stun:stun1.l.google.com:19302"
+    - "stun:stun.cloudflare.com:3478"
+  
+  # Metered.ca TURN servers (fallback)
+  turn_servers:
+    - url: "turn:global.relay.metered.ca:80"
+      username: "bbded4f052d4c3c9e8e6342f"
+      credential: "UWI3yEJTIVm+nT0J"
+    - url: "turn:global.relay.metered.ca:80?transport=tcp"
+      username: "bbded4f052d4c3c9e8e6342f"
+      credential: "UWI3yEJTIVm+nT0J"
+    - url: "turn:global.relay.metered.ca:443"
+      username: "bbded4f052d4c3c9e8e6342f"
+      credential: "UWI3yEJTIVm+nT0J"
+    - url: "turns:global.relay.metered.ca:443?transport=tcp"
+      username: "bbded4f052d4c3c9e8e6342f"
+      credential: "UWI3yEJTIVm+nT0J"

@@ -1,0 +1,17 @@
+{
+  "name": "fleet-workers",
+  "version": "1.0.0",
+  "description": "Cloudflare Workers for UGV fleet management",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail",
+    "types": "wrangler types"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241127.0",
+    "typescript": "^5.3.3",
+    "wrangler": "^4.53.0"
+  }
+}

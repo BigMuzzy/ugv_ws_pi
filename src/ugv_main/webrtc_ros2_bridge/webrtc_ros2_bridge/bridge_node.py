@@ -17,6 +17,7 @@ except ImportError:
 from .command_handler import CommandHandler
 from .signaling_server import SignalingServer, AIOHTTP_AVAILABLE
 from .webrtc_manager import AIORTC_AVAILABLE
+from .sfu_client import CloudflareSFUClient
 
 
 class WebRTCBridgeNode(Node):
@@ -48,31 +49,26 @@ class WebRTCBridgeNode(Node):
             publish_rate_hz=robot_config.get("publish_rate_hz", 20)
         )
 
-        # Get static files directory
-        static_dir = self._get_static_dir()
-
-        # Initialize signaling server
-        if AIOHTTP_AVAILABLE:
-            self._server = SignalingServer(
-                host=server_config.get("host", "0.0.0.0"),
-                port=server_config.get("port", 8080),
-                static_dir=static_dir,
-                on_command=self._on_command,
-                on_emergency_stop=self._on_emergency_stop,
-                video_config=video_config,
-                webrtc_config=webrtc_config,
-                logger=self.get_logger()
-            )
-        else:
-            self._server = None
-            self.get_logger().error(
-                "aiohttp not available - signaling server disabled"
-            )
-
-        # Start async event loop in separate thread
+        # Check mode: SFU or P2P
+        sfu_config = config.get("sfu", {})
+        use_sfu = sfu_config.get("enabled", False)
+        
+        self._sfu_client = None
+        self._server = None
         self._loop = None
         self._loop_thread = None
-        if self._server:
+
+        if use_sfu:
+            # SFU mode - connect to Cloudflare Calls via Workers
+            self.get_logger().info("Using SFU mode (Cloudflare Calls)")
+            self._init_sfu_mode(sfu_config, video_config, webrtc_config)
+        else:
+            # P2P mode - traditional signaling server
+            self.get_logger().info("Using P2P mode (signaling server)")
+            self._init_p2p_mode(video_config, webrtc_config, server_config)
+
+        # Start async event loop in separate thread
+        if self._server or self._sfu_client:
             self._start_async_loop()
 
         self.get_logger().info("WebRTC Bridge Node initialized")
@@ -153,6 +149,28 @@ class WebRTCBridgeNode(Node):
             ParameterDescriptor(description="Path to configuration file")
         )
 
+        # SFU mode parameters
+        self.declare_parameter(
+            "sfu.enabled",
+            False,
+            ParameterDescriptor(description="Enable SFU mode (Cloudflare Calls)")
+        )
+        self.declare_parameter(
+            "sfu.robot_id",
+            "robot_01",
+            ParameterDescriptor(description="Unique robot identifier")
+        )
+        self.declare_parameter(
+            "sfu.workers_endpoint",
+            "https://fleet-workers.mssemyonov.workers.dev",
+            ParameterDescriptor(description="Cloudflare Workers endpoint URL")
+        )
+        self.declare_parameter(
+            "sfu.fallback_to_p2p",
+            True,
+            ParameterDescriptor(description="Fallback to P2P if SFU fails")
+        )
+
     def _load_config(self):
         """Load configuration from file or parameters."""
         config = {
@@ -202,6 +220,12 @@ class WebRTCBridgeNode(Node):
                         "credential": "UWI3yEJTIVm+nT0J"
                     }
                 ],
+            },
+            "sfu": {
+                "enabled": self.get_parameter("sfu.enabled").value,
+                "robot_id": self.get_parameter("sfu.robot_id").value,
+                "workers_endpoint": self.get_parameter("sfu.workers_endpoint").value,
+                "fallback_to_p2p": self.get_parameter("sfu.fallback_to_p2p").value,
             }
         }
 
@@ -243,20 +267,100 @@ class WebRTCBridgeNode(Node):
 
         return None
 
+    def _init_sfu_mode(self, sfu_config, video_config, webrtc_config):
+        """Initialize SFU mode with Cloudflare Calls."""
+        if not AIORTC_AVAILABLE:
+            self.get_logger().error(
+                \"aiortc not available - SFU mode disabled. Install with: pip install aiortc\"
+            )
+            if sfu_config.get(\"fallback_to_p2p\", True):
+                self.get_logger().warning(\"Falling back to P2P mode\")
+                server_config = {\"host\": \"0.0.0.0\", \"port\": 8080}
+                self._init_p2p_mode(video_config, webrtc_config, server_config)
+            return
+
+        robot_id = sfu_config.get(\"robot_id\", \"robot_01\")
+        workers_endpoint = sfu_config.get(\"workers_endpoint\", \"https://fleet-workers.mssemyonov.workers.dev\")
+        
+        self.get_logger().info(f\"Initializing SFU client for robot: {robot_id}\")
+        self.get_logger().info(f\"Workers endpoint: {workers_endpoint}\")
+        
+        # Note: Video track will be set up in async loop after VideoSource is created
+        self._sfu_client = CloudflareSFUClient(
+            robot_id=robot_id,
+            workers_endpoint=workers_endpoint,
+            video_track=None,  # Will be set later
+            on_command=self._on_sfu_command,
+            on_emergency_stop=self._on_sfu_emergency_stop,
+            logger=self.get_logger(),
+            fallback_mode=False
+        )
+        
+        # Store config for later use
+        self._video_config = video_config
+        self._sfu_config = sfu_config
+
+    def _init_p2p_mode(self, video_config, webrtc_config, server_config):
+        \"\"\"Initialize P2P mode with signaling server.\"\"\"
+        # Get static files directory
+        static_dir = self._get_static_dir()
+
+        # Initialize signaling server
+        if AIOHTTP_AVAILABLE:
+            self._server = SignalingServer(
+                host=server_config.get(\"host\", \"0.0.0.0\"),
+                port=server_config.get(\"port\", 8080),
+                static_dir=static_dir,
+                on_command=self._on_command,
+                on_emergency_stop=self._on_emergency_stop,
+                video_config=video_config,
+                webrtc_config=webrtc_config,
+                logger=self.get_logger()
+            )
+        else:
+            self._server = None
+            self.get_logger().error(
+                \"aiohttp not available - signaling server disabled\"
+            )
+
     def _start_async_loop(self):
         """Start asyncio event loop in separate thread."""
         def run_loop():
             self._loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._loop)
 
-            # Start server
-            self._loop.run_until_complete(self._server.start())
+            # Start server (P2P mode) or connect SFU client
+            if self._server:
+                self._loop.run_until_complete(self._server.start())
+            elif self._sfu_client:
+                # Connect to SFU in async loop
+                async def connect_sfu():
+                    success = await self._sfu_client.connect()
+                    if not success:
+                        self.get_logger().error(\"Failed to connect to SFU\")
+                        if self._sfu_config.get(\"fallback_to_p2p\", True):
+                            self.get_logger().warning(\"Falling back to P2P mode\")
+                            # TODO: Implement P2P fallback here
+                
+                self._loop.run_until_complete(connect_sfu())
 
             # Run event loop
             self._loop.run_forever()
 
         self._loop_thread = threading.Thread(target=run_loop, daemon=True)
         self._loop_thread.start()
+
+    def _on_sfu_command(self, linear, angular):
+        \"\"\"Handle velocity command from SFU DataChannel.\"\"\"
+        # SFU sends simplified commands (linear, angular only)
+        self._command_handler.process_command(
+            linear, 0.0, 0.0,  # linear x, y, z
+            0.0, 0.0, angular  # angular x, y, z
+        )
+
+    def _on_sfu_emergency_stop(self):
+        \"\"\"Handle emergency stop from SFU.\"\"\"
+        self._command_handler.set_emergency_stop(True)
 
     def _on_command(self, linear_x, linear_y, linear_z,
                     angular_x, angular_y, angular_z):
@@ -272,12 +376,18 @@ class WebRTCBridgeNode(Node):
 
     def destroy_node(self):
         """Clean up resources."""
-        # Stop server
-        if self._server and self._loop:
-            asyncio.run_coroutine_threadsafe(
-                self._server.stop(),
-                self._loop
-            ).result(timeout=5.0)
+        # Stop server or SFU client
+        if self._loop:
+            if self._server:
+                asyncio.run_coroutine_threadsafe(
+                    self._server.stop(),
+                    self._loop
+                ).result(timeout=5.0)
+            elif self._sfu_client:
+                asyncio.run_coroutine_threadsafe(
+                    self._sfu_client.disconnect(),
+                    self._loop
+                ).result(timeout=5.0)
 
             self._loop.call_soon_threadsafe(self._loop.stop)
             if self._loop_thread:
