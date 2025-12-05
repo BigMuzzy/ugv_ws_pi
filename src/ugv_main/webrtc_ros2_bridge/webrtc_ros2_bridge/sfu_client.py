@@ -115,14 +115,14 @@ class CloudflareSFUClient:
                     f"Created SFU session: {self._session_id}"
                 )
 
-            # Step 2: Create RTCPeerConnection with ICE servers
-            await self._create_peer_connection()
-
-            # Create a dummy video track if none provided
+            # Create a dummy video track if none provided (BEFORE creating peer connection)
             if not self._video_track:
                 if self._logger:
                     self._logger.info("No video track provided, creating dummy track")
                 self._video_track = DummyVideoTrack()
+
+            # Step 2: Create RTCPeerConnection with ICE servers
+            await self._create_peer_connection()
 
             # Step 3: Create offer and send to SFU
             await self._create_and_send_offer()
