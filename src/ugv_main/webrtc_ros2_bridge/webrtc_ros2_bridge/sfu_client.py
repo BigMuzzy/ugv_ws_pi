@@ -260,16 +260,24 @@ class CloudflareSFUClient:
     def _handle_command_message(self, message):
         """Handle incoming command messages."""
         try:
+            if self._logger:
+                self._logger.info(f"Received DataChannel message: {message}")
+
             data = json.loads(message)
             msg_type = data.get('type')
             
             if msg_type == 'command':
                 linear = data.get('linear', 0.0)
                 angular = data.get('angular', 0.0)
+                if self._logger:
+                    self._logger.info(f"Processing command - Linear: {linear}, Angular: {angular}")
+                
                 if self._on_command:
                     self._on_command(linear, angular)
             
             elif msg_type == 'emergency_stop':
+                if self._logger:
+                    self._logger.warning("Received EMERGENCY STOP command")
                 if self._on_emergency_stop:
                     self._on_emergency_stop()
             

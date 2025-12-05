@@ -1,6 +1,7 @@
-import { Component, OnInit, ElementRef, ViewChild } from '@angular/core';
+import { Component, OnInit, ElementRef, ViewChild, AfterViewInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
+import nipplejs from 'nipplejs';
 
 interface RobotInfo {
   robotId: string;
@@ -88,20 +89,26 @@ interface RobotInfo {
           <button class="btn btn-primary" (click)="disconnect()" style="margin-right: 0.5rem;">Disconnect</button>
           <span *ngIf="connectionState">Connection: {{connectionState}}</span>
         </div>
+                <div class="joystick-container" style="margin-top: 1rem; display: flex; justify-content: center;">
+           <div #joystickContainer style="width: 150px; height: 150px; position: relative;"></div>
+        </div>
       </div>
     </div>
   `
 })
 export class AppComponent implements OnInit {
   @ViewChild('videoElement') videoElement?: ElementRef<HTMLVideoElement>;
+  @ViewChild('joystickContainer') joystickContainer?: ElementRef<HTMLDivElement>;
   
   apiStatus: any = null;
   robots: RobotInfo[] = [];
   viewingRobot: string | null = null;
+  
   connectionState: string = '';
   
   private pc: RTCPeerConnection | null = null;
   private dataChannel: RTCDataChannel | null = null;
+  private joystickManager: any = null;
 
   constructor(private http: HttpClient) {}
 
@@ -143,6 +150,9 @@ export class AppComponent implements OnInit {
   async connectToRobot(robotId: string) {
     this.viewingRobot = robotId;
     this.connectionState = 'Connecting...';
+    
+    // Initialize joystick after view update
+    this.initJoystick();
 
     try {
       // Get session info
@@ -183,11 +193,13 @@ export class AppComponent implements OnInit {
         }
       };
 
-      // Create data channel for commands
-      // this.dataChannel = this.pc.createDataChannel('commands');
-      // this.dataChannel.onopen = () => {
-      //   console.log('Data channel opened');
-      // };
+      // Handle incoming data channel
+      this.pc.ondatachannel = (event) => {
+        console.log('Received data channel:', event.channel.label);
+        this.dataChannel = event.channel;
+        this.dataChannel.onopen = () => console.log('Data channel opened');
+        this.dataChannel.onmessage = (msg) => console.log('Received message:', msg.data);
+      };
 
       // Add transceiver to receive video from robot
       this.pc.addTransceiver('video', { direction: 'recvonly' });
@@ -269,6 +281,10 @@ export class AppComponent implements OnInit {
   }
 
   disconnect() {
+    if (this.joystickManager) {
+      this.joystickManager.destroy();
+      this.joystickManager = null;
+    }
     if (this.dataChannel) {
       this.dataChannel.close();
       this.dataChannel = null;
@@ -282,5 +298,67 @@ export class AppComponent implements OnInit {
     }
     this.viewingRobot = null;
     this.connectionState = '';
+  }
+
+  initJoystick() {
+    // Wait a tick for the container to be rendered
+    setTimeout(() => {
+      if (!this.joystickContainer) return;
+      
+      this.joystickManager = nipplejs.create({
+        zone: this.joystickContainer.nativeElement,
+        mode: 'static',
+        position: { left: '50%', top: '50%' },
+        color: 'blue',
+        size: 150
+      });
+
+      this.joystickManager.on('move', (evt: any, data: any) => {
+        this.onJoystickMove(data);
+      });
+
+      this.joystickManager.on('end', () => {
+        this.onJoystickEnd();
+      });
+    }, 100);
+  }
+
+  onJoystickMove(data: any) {
+    if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+      console.warn('Joystick moved but DataChannel not open', this.dataChannel?.readyState);
+      return;
+    }
+
+    // Convert joystick data to linear/angular velocity
+    // nipplejs returns vector { x, y } where x, y are between -1 and 1 (roughly)
+    // We need to map this to linear (forward/back) and angular (left/right)
+    
+    // Forward/Back is Y axis (inverted in nipplejs usually, up is positive)
+    // Left/Right is X axis
+    
+    const linear = data.vector.y; 
+    const angular = -data.vector.x; // Invert X for correct rotation direction
+
+    const command = {
+      type: 'command',
+      linear: linear,
+      angular: angular
+    };
+
+    console.log('Sending joystick command:', command);
+    this.dataChannel.send(JSON.stringify(command));
+  }
+
+  onJoystickEnd() {
+    if (!this.dataChannel || this.dataChannel.readyState !== 'open') return;
+
+    // Stop the robot when joystick is released
+    const command = {
+      type: 'command',
+      linear: 0,
+      angular: 0
+    };
+
+    this.dataChannel.send(JSON.stringify(command));
   }
 }
