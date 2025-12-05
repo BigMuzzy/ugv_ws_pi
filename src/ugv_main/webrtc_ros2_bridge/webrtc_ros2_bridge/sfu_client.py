@@ -246,9 +246,15 @@ class CloudflareSFUClient:
                         self._logger.error(f"Error handling message: {e}")
 
         # Add video track if available
-        if self._video_track and self._relay:
-            relayed_track = self._relay.subscribe(self._video_track)
-            self._pc.addTrack(relayed_track)
+        if self._video_track:
+            if self._relay:
+                # Use relay for existing tracks
+                relayed_track = self._relay.subscribe(self._video_track)
+                self._pc.addTrack(relayed_track)
+            else:
+                # Add track directly if no relay
+                self._pc.addTrack(self._video_track)
+            
             if self._logger:
                 self._logger.info("Added video track to SFU connection")
         else:
