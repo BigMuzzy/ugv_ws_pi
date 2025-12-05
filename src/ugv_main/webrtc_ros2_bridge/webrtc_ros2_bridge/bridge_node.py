@@ -271,11 +271,11 @@ class WebRTCBridgeNode(Node):
         """Initialize SFU mode with Cloudflare Calls."""
         if not AIORTC_AVAILABLE:
             self.get_logger().error(
-                \"aiortc not available - SFU mode disabled. Install with: pip install aiortc\"
+                "aiortc not available - SFU mode disabled. Install with: pip install aiortc"
             )
-            if sfu_config.get(\"fallback_to_p2p\", True):
-                self.get_logger().warning(\"Falling back to P2P mode\")
-                server_config = {\"host\": \"0.0.0.0\", \"port\": 8080}
+            if sfu_config.get("fallback_to_p2p", True):
+                self.get_logger().warning("Falling back to P2P mode")
+                server_config = {"host": "0.0.0.0", "port": 8080}
                 self._init_p2p_mode(video_config, webrtc_config, server_config)
             return
 
@@ -320,7 +320,7 @@ class WebRTCBridgeNode(Node):
         else:
             self._server = None
             self.get_logger().error(
-                \"aiohttp not available - signaling server disabled\"
+                "aiohttp not available - signaling server disabled"
             )
 
     def _start_async_loop(self):
