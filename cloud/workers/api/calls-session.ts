@@ -330,7 +330,8 @@ export async function handleOffer(
     }
 
     // Parse SDP to extract mid values
-    const sdpLines = offer.sdp!.split('\n');
+    // Handle both \r\n and \n
+    const sdpLines = offer.sdp!.split(/\r?\n/);
     const mids: string[] = [];
     for (const line of sdpLines) {
       if (line.startsWith('a=mid:')) {
@@ -342,9 +343,11 @@ export async function handleOffer(
     console.log('Extracted mids from SDP:', mids);
 
     // Build tracks array with mids from SDP
+    // Use a unique track name to avoid any potential conflicts or stale state
+    const timestamp = Date.now();
     const tracks = mids.map((mid, index) => ({
       location: 'local',
-      trackName: `${robotId}_track_${index}`,
+      trackName: `${robotId}_track_${index}_${timestamp}`,
       mid: mid,
     }));
 
@@ -398,6 +401,7 @@ export async function handleOffer(
 
     // Store the tracks info in session
     sessionInfo.tracks = tracksData.tracks;
+    sessionInfo.offer = offer; // Store the robot's offer
     await env.ROBOT_REGISTRY.put(
       `session:${robotId}`,
       JSON.stringify(sessionInfo),
@@ -418,7 +422,302 @@ export async function handleOffer(
 }
 
 /**
- * Get answer for a session (for viewers)
+ * Handle viewer's offer to pull tracks from robot
+ * POST /api/sessions/:robotId/pull
+ */
+export async function handlePull(
+  robotId: string,
+  request: Request,
+  env: Env
+): Promise<Response> {
+  try {
+    const body = await request.json() as { offer?: RTCSessionDescriptionInit };
+    const { offer } = body;
+
+    // Get session info
+    if (!env.ROBOT_REGISTRY) {
+      return jsonError('Robot registry not configured', 500);
+    }
+
+    const sessionData = await env.ROBOT_REGISTRY.get(`session:${robotId}`);
+    if (!sessionData) {
+      return jsonError('Session not found', 404);
+    }
+
+    const sessionInfo = JSON.parse(sessionData) as SFUSessionInfo;
+
+    // Validate Cloudflare Calls credentials
+    if (!env.CLOUDFLARE_CALLS_APP_ID || !env.CLOUDFLARE_CALLS_API_TOKEN) {
+      return jsonError('Cloudflare Calls not configured', 500);
+    }
+
+    console.log('Processing viewer pull request for session:', sessionInfo.sessionId);
+
+    // Create a new session for the viewer
+    const viewerSessionResponse = await fetch(
+      `${CALLS_API_BASE}/apps/${env.CLOUDFLARE_CALLS_APP_ID}/sessions/new`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${env.CLOUDFLARE_CALLS_API_TOKEN}`,
+        },
+      }
+    );
+
+    if (!viewerSessionResponse.ok) {
+      const errorText = await viewerSessionResponse.text();
+      console.error('Failed to create viewer session:', errorText);
+      return jsonError(`Failed to create viewer session: ${errorText}`, viewerSessionResponse.status);
+    }
+
+    const viewerSessionData = await viewerSessionResponse.json() as {
+      sessionId: string;
+    };
+
+    console.log('Created viewer session:', viewerSessionData.sessionId);
+
+    // Fetch authoritative session details from Cloudflare to get active tracks
+    let activeTracks: Array<{ trackName: string; mid: string; status: string; sessionId?: string }> = [];
+    try {
+      const sessionDetailsResponse = await fetch(
+        `${CALLS_API_BASE}/apps/${env.CLOUDFLARE_CALLS_APP_ID}/sessions/${sessionInfo.sessionId}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${env.CLOUDFLARE_CALLS_API_TOKEN}`,
+          },
+        }
+      );
+      
+      if (sessionDetailsResponse.ok) {
+        const sessionDetails = await sessionDetailsResponse.json() as { tracks?: Array<any> };
+        // Filter for active local tracks in the robot session
+        activeTracks = (sessionDetails.tracks || []).filter((t: any) => 
+          t.status === 'active' && t.location === 'local'
+        );
+        console.log('Active tracks in robot session:', JSON.stringify(activeTracks));
+      } else {
+        console.warn('Failed to fetch robot session details');
+      }
+    } catch (e) {
+      console.error('Error fetching session details:', e);
+    }
+
+    // If we have an offer (Client-Side Offer)
+    if (offer && offer.sdp) {
+      // Parse SDP to extract mid values from viewer's offer
+      const sdpLines = offer.sdp.split(/\r?\n/);
+      const mids: string[] = [];
+      for (const line of sdpLines) {
+        if (line.startsWith('a=mid:')) {
+          const mid = line.substring(6).trim();
+          mids.push(mid);
+        }
+      }
+
+      console.log('Extracted mids from viewer offer:', mids);
+
+      // Build tracks array - viewer wants to receive (pull) remote tracks from robot's session
+      const tracks = mids.slice(0, activeTracks.length).map((mid, index) => ({
+        location: 'remote',
+        sessionId: activeTracks[index].sessionId || sessionInfo.sessionId,
+        trackName: activeTracks[index].trackName,
+        mid: mid,
+      }));
+
+      console.log('Pulling tracks from robot session (Client Offer):', JSON.stringify(tracks));
+
+      const requestBody = {
+        sessionDescription: {
+          type: offer.type,
+          sdp: offer.sdp,
+        },
+        tracks: tracks.length > 0 ? tracks : undefined
+      };
+
+      // Send offer to Cloudflare Calls SFU
+      const pullResponse = await fetch(
+        `${CALLS_API_BASE}/apps/${env.CLOUDFLARE_CALLS_APP_ID}/sessions/${viewerSessionData.sessionId}/tracks/new`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${env.CLOUDFLARE_CALLS_API_TOKEN}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        }
+      );
+
+      if (!pullResponse.ok) {
+        const errorText = await pullResponse.text();
+        console.error('Cloudflare Calls pull tracks API error:', errorText);
+        return jsonError(`Failed to pull tracks: ${errorText}`, pullResponse.status);
+      }
+
+      const pullData = await pullResponse.json() as {
+        sessionDescription?: RTCSessionDescriptionInit;
+        tracks?: unknown[];
+      };
+
+      return jsonResponse({
+        success: true,
+        answer: pullData.sessionDescription,
+        tracks: pullData.tracks,
+        sessionId: viewerSessionData.sessionId // Return viewer session ID
+      });
+
+    } else {
+      // No offer provided (Server-Side Offer)
+      // We ask Cloudflare to generate an offer for the tracks we want
+      
+      const tracks = activeTracks.map((track) => ({
+        location: 'remote',
+        sessionId: track.sessionId || sessionInfo.sessionId,
+        trackName: track.trackName,
+        // No 'mid' needed here, Cloudflare will assign one
+      }));
+
+      console.log('Pulling tracks from robot session (Server Offer):', JSON.stringify(tracks));
+
+      const requestBody = {
+        tracks: tracks
+      };
+
+      // Send request to Cloudflare Calls SFU
+      const pullResponse = await fetch(
+        `${CALLS_API_BASE}/apps/${env.CLOUDFLARE_CALLS_APP_ID}/sessions/${viewerSessionData.sessionId}/tracks/new`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${env.CLOUDFLARE_CALLS_API_TOKEN}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        }
+      );
+
+      if (!pullResponse.ok) {
+        const errorText = await pullResponse.text();
+        console.error('Cloudflare Calls pull tracks API error:', errorText);
+        return jsonError(`Failed to pull tracks: ${errorText}`, pullResponse.status);
+      }
+
+      const pullData = await pullResponse.json() as {
+        sessionDescription?: RTCSessionDescriptionInit;
+        tracks?: unknown[];
+      };
+
+      // This is an OFFER from Cloudflare
+      return jsonResponse({
+        success: true,
+        offer: pullData.sessionDescription,
+        tracks: pullData.tracks,
+        sessionId: viewerSessionData.sessionId // Return viewer session ID
+      });
+    }
+  } catch (error) {
+    console.error('Error handling pull:', error);
+    return jsonError(
+      error instanceof Error ? error.message : 'Unknown error',
+      500
+    );
+  }
+}
+
+/**
+ * Handle viewer's answer to robot's offer (or server offer)
+ * POST /api/sessions/:robotId/answer
+ */
+export async function handleAnswer(
+  robotId: string,
+  request: Request,
+  env: Env
+): Promise<Response> {
+  try {
+    const body = await request.json() as { answer: RTCSessionDescriptionInit; sessionId?: string };
+    const { answer, sessionId } = body;
+
+    if (!answer || !answer.sdp) {
+      return jsonError('Missing or invalid answer', 400);
+    }
+
+    // If sessionId is provided, it's the viewer's session ID (Server-Side Offer flow)
+    if (sessionId) {
+      // Validate Cloudflare Calls credentials
+      if (!env.CLOUDFLARE_CALLS_APP_ID || !env.CLOUDFLARE_CALLS_API_TOKEN) {
+        return jsonError('Cloudflare Calls not configured', 500);
+      }
+
+      console.log('Processing viewer answer for viewer session:', sessionId);
+
+      const requestBody = {
+        sessionDescription: {
+          type: answer.type,
+          sdp: answer.sdp,
+        }
+      };
+
+      // Send answer to Cloudflare Calls SFU (renegotiate)
+      const renegResponse = await fetch(
+        `${CALLS_API_BASE}/apps/${env.CLOUDFLARE_CALLS_APP_ID}/sessions/${sessionId}/renegotiate`,
+        {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${env.CLOUDFLARE_CALLS_API_TOKEN}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        }
+      );
+
+      if (!renegResponse.ok) {
+        const errorText = await renegResponse.text();
+        console.error('Cloudflare Calls renegotiate API error:', errorText);
+        return jsonError(`Failed to process answer: ${errorText}`, renegResponse.status);
+      }
+
+      const renegData = await renegResponse.json() as {
+        sessionDescription?: RTCSessionDescriptionInit;
+        tracks?: unknown[];
+      };
+
+      return jsonResponse({
+        success: true,
+        message: 'Viewer connected to session',
+        tracks: renegData.tracks,
+      });
+
+    } else {
+      // Legacy flow (Client-Side Offer, but answer endpoint used differently?)
+      // This block was previously assuming we are adding tracks to an existing session via answer?
+      // But handlePull handles the initial connection.
+      // Let's keep the old logic just in case, but it seems unused by the new flow.
+      
+      // Get session info
+      if (!env.ROBOT_REGISTRY) {
+        return jsonError('Robot registry not configured', 500);
+      }
+
+      const sessionData = await env.ROBOT_REGISTRY.get(`session:${robotId}`);
+      if (!sessionData) {
+        return jsonError('Session not found', 404);
+      }
+      const sessionInfo = JSON.parse(sessionData) as SFUSessionInfo;
+      
+      // ... (rest of old logic if needed, but likely we just need the above block)
+      return jsonError('Session ID required for answer', 400);
+    }
+  } catch (error) {
+    console.error('Error handling answer:', error);
+    return jsonError(
+      error instanceof Error ? error.message : 'Unknown error',
+      500
+    );
+  }
+}
+
+/**
+ * Get answer for a session (for viewers) - DEPRECATED
+ * Use handleAnswer instead (POST /api/sessions/:robotId/answer)
  * GET /api/sessions/:robotId/answer
  */
 export async function getAnswer(

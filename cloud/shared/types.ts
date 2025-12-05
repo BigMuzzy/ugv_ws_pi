@@ -34,6 +34,10 @@ export interface SFUSessionInfo {
   expires: string;
   iceServers: RTCIceServer[];
   tracks?: unknown[]; // Cloudflare Calls track info
+  offer?: {
+    type: 'offer';
+    sdp: string;
+  };
 }
 
 export interface RTCIceServer {

@@ -12,13 +12,14 @@
 - **URL:** https://fleet-workers.mssemyonov.workers.dev
 - **KV Namespace:** Configured and operational
 - **All Endpoints:** ✅ Tested and working
+- **Signaling:** ✅ Server-Side Offer flow implemented for robust connection
 
 **Test Results:**
 ```bash
 ✅ POST /api/sessions/create - Creates SFU session
 ✅ GET /api/sessions/:robotId - Retrieves session info
-✅ DELETE /api/sessions/:robotId - Deletes session
-✅ GET /api/ice-servers - Returns ICE servers
+✅ POST /api/sessions/:robotId/pull - Viewer connection (Server-Side Offer)
+✅ POST /api/sessions/:robotId/answer - Viewer answer handling
 ```
 
 ---
@@ -28,7 +29,7 @@
 ### 1. ✅ Workers Backend API (`cloud/workers/`)
 
 **Files Created/Modified:**
-- `api/calls-session.ts` - Complete SFU session management
+- `api/calls-session.ts` - Complete SFU session management with Server-Side Offer flow
 - `src/index.ts` - Wired up API endpoints
 - `wrangler.toml` - Added KV namespace configuration
 
@@ -37,6 +38,8 @@
 - `GET /api/sessions/:robotId` - Get session info for viewers
 - `DELETE /api/sessions/:robotId` - Close session
 - `GET /api/ice-servers` - Get TURN credentials
+- `POST /api/sessions/:robotId/pull` - Initiate viewer connection (Server Offer)
+- `POST /api/sessions/:robotId/answer` - Complete viewer connection
 
 ### 2. ✅ Robot-Side SFU Client (`src/ugv_main/webrtc_ros2_bridge/`)
 
@@ -228,63 +231,44 @@ npm start
 
 ## Known Limitations & TODOs
 
-### 🚧 Incomplete Signaling Flow
+### 🚧 DataChannel & Teleop
 
-The current implementation has placeholder code for the full SFU signaling flow. You need to:
+The video stream is working, but teleoperation (DataChannel) needs to be enabled:
 
-1. **Implement offer/answer exchange:**
-   - Robot sends SDP offer to Workers
-   - Workers forwards to Cloudflare Calls API
-   - Calls returns SDP answer
-   - Workers returns answer to robot
-   - Robot sets remote description
+1. **Enable DataChannel in Frontend:**
+   - Uncomment DataChannel creation in `app.component.ts`
+   - Implement gamepad input handling
+   - Send commands via DataChannel
 
-2. **Implement ICE candidate exchange:**
-   - Both robot and viewers exchange ICE candidates via Workers
-   - Workers acts as signaling intermediary
-
-**Files to update:**
-- `cloud/workers/api/calls-session.ts` - Add signaling endpoints
-- `src/ugv_main/webrtc_ros2_bridge/webrtc_ros2_bridge/sfu_client.py` - Complete `_create_and_send_offer()`
-- `cloud/frontend/src/lib/sfuClient.ts` - Complete answer handling
+2. **Verify Robot-Side Handling:**
+   - Ensure `sfu_client.py` correctly receives and parses commands
+   - Verify `bridge_node.py` executes commands
 
 ### 🎯 Next Steps
 
-1. **Complete signaling implementation**
-   - Add `/api/sessions/:robotId/offer` endpoint
-   - Add `/api/sessions/:robotId/answer` endpoint  
-   - Add ICE candidate endpoints
+1. **Enable Teleoperation**
+   - Update frontend to send gamepad commands
+   - Test latency
 
-2. **Integrate with bridge_node.py**
-   - Add SFU mode parameter
-   - Wire up video source
-   - Test fallback to P2P
-
-3. **Frontend integration**
-   - Create video player component
-   - Add gamepad controller
-   - Display connection status
-
-4. **Multi-viewer testing**
+2. **Multi-viewer testing**
    - Connect multiple browsers to same robot
-   - Verify video quality
-   - Test command latency
+   - Verify video quality stability
 
 ---
 
 ## Testing Checklist
 
-- [ ] Workers deployed and accessible
-- [ ] KV namespace created and bound
-- [ ] Secrets configured correctly
-- [ ] Session creation API works
-- [ ] ICE servers returned correctly
-- [ ] Robot can create SFU session
-- [ ] Robot connects to SFU (ICE connected)
-- [ ] Video track published to SFU
-- [ ] Frontend can fetch session info
-- [ ] Frontend connects to SFU
-- [ ] Frontend receives video stream
+- [x] Workers deployed and accessible
+- [x] KV namespace created and bound
+- [x] Secrets configured correctly
+- [x] Session creation API works
+- [x] ICE servers returned correctly
+- [x] Robot can create SFU session
+- [x] Robot connects to SFU (ICE connected)
+- [x] Video track published to SFU
+- [x] Frontend can fetch session info
+- [x] Frontend connects to SFU (Server-Side Offer)
+- [x] Frontend receives video stream
 - [ ] Commands sent from frontend
 - [ ] Commands received by robot
 - [ ] Multiple viewers can watch same robot

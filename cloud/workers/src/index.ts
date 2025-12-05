@@ -13,6 +13,8 @@ import {
   deleteSession,
   getIceServersEndpoint,
   handleOffer,
+  handlePull,
+  handleAnswer,
   getAnswer,
   addIceCandidate,
   type Env as CallsEnv
@@ -91,11 +93,18 @@ export default {
           return await handleOffer(robotId, request, env);
         }
 
-        // GET /api/sessions/:robotId/answer
+        // POST /api/sessions/:robotId/pull
+        const pullMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/pull$/);
+        if (pullMatch && request.method === 'POST') {
+          const robotId = pullMatch[1];
+          return await handlePull(robotId, request, env);
+        }
+
+        // POST /api/sessions/:robotId/answer
         const answerMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/answer$/);
-        if (answerMatch && request.method === 'GET') {
+        if (answerMatch && request.method === 'POST') {
           const robotId = answerMatch[1];
-          return await getAnswer(robotId, env);
+          return await handleAnswer(robotId, request, env);
         }
 
         // POST /api/sessions/:robotId/ice-candidate
@@ -142,8 +151,9 @@ export default {
             createSession: 'POST /api/sessions/create',
             getSession: 'GET /api/sessions/:robotId',
             deleteSession: 'DELETE /api/sessions/:robotId',
-            sendOffer: 'POST /api/sessions/:robotId/offer',
-            getAnswer: 'GET /api/sessions/:robotId/answer',
+            sendOffer: 'POST /api/sessions/:robotId/offer (robot)',
+            pullTracks: 'POST /api/sessions/:robotId/pull (viewer)',
+            sendAnswer: 'POST /api/sessions/:robotId/answer',
             addIceCandidate: 'POST /api/sessions/:robotId/ice-candidate',
             iceServers: 'GET /api/ice-servers'
           },

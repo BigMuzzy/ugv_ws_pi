@@ -191,34 +191,6 @@ class CloudflareSFUClient:
         # Create peer connection
         self._pc = RTCPeerConnection(configuration=config)
 
-        # Create data channel for commands
-        # We create it here so it's included in the initial Offer to SFU
-        self._data_channel = self._pc.createDataChannel("commands")
-        
-        @self._data_channel.on("message")
-        def on_message(message):
-            """Handle incoming command messages."""
-            try:
-                data = json.loads(message)
-                msg_type = data.get('type')
-                
-                if msg_type == 'command':
-                    linear = data.get('linear', 0.0)
-                    angular = data.get('angular', 0.0)
-                    if self._on_command:
-                        self._on_command(linear, angular)
-                
-                elif msg_type == 'emergency_stop':
-                    if self._on_emergency_stop:
-                        self._on_emergency_stop()
-                
-            except json.JSONDecodeError:
-                if self._logger:
-                    self._logger.warning(f"Invalid JSON message: {message}")
-            except Exception as e:
-                if self._logger:
-                    self._logger.error(f"Error handling message: {e}")
-
         # Set up event handlers
         @self._pc.on("connectionstatechange")
         async def on_connectionstatechange():
@@ -243,17 +215,35 @@ class CloudflareSFUClient:
 
         @self._pc.on("datachannel")
         def on_datachannel(channel):
-            """Handle incoming data channel from SFU (fallback)."""
+            """Handle incoming data channel from SFU (for commands)."""
             if self._logger:
                 self._logger.info(f"Received data channel: {channel.label}")
             
-            # If we didn't create one, or this is a new one, use it
-            if not self._data_channel:
-                self._data_channel = channel
-                
-                @channel.on("message")
-                def on_message_fallback(message):
-                    on_message(message)
+            self._data_channel = channel
+            
+            @channel.on("message")
+            def on_message(message):
+                """Handle incoming command messages."""
+                try:
+                    data = json.loads(message)
+                    msg_type = data.get('type')
+                    
+                    if msg_type == 'command':
+                        linear = data.get('linear', 0.0)
+                        angular = data.get('angular', 0.0)
+                        if self._on_command:
+                            self._on_command(linear, angular)
+                    
+                    elif msg_type == 'emergency_stop':
+                        if self._on_emergency_stop:
+                            self._on_emergency_stop()
+                    
+                except json.JSONDecodeError:
+                    if self._logger:
+                        self._logger.warning(f"Invalid JSON message: {message}")
+                except Exception as e:
+                    if self._logger:
+                        self._logger.error(f"Error handling message: {e}")
 
         # Add video track if available
         if self._video_track:
