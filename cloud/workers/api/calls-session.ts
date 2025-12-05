@@ -329,6 +329,23 @@ export async function handleOffer(
       return jsonError('Cloudflare Calls not configured', 500);
     }
 
+    // Parse SDP to extract mid values
+    const sdpLines = offer.sdp!.split('\n');
+    const mids: string[] = [];
+    for (const line of sdpLines) {
+      if (line.startsWith('a=mid:')) {
+        const mid = line.substring(6).trim();
+        mids.push(mid);
+      }
+    }
+
+    // Build tracks array with mids from SDP
+    const tracks = mids.map((mid, index) => ({
+      location: 'local',
+      trackName: `${robotId}_track_${index}`,
+      mid: mid,
+    }));
+
     // Send offer to Cloudflare Calls SFU and get answer
     // For Cloudflare Calls, we use the tracks endpoint to add tracks with SDP
     const tracksResponse = await fetch(
@@ -344,12 +361,7 @@ export async function handleOffer(
             type: offer.type,
             sdp: offer.sdp,
           },
-          tracks: [
-            {
-              location: 'local',
-              trackName: `${robotId}_video`,
-            }
-          ]
+          tracks: tracks.length > 0 ? tracks : undefined,
         }),
       }
     );
