@@ -346,6 +346,21 @@ export async function handleOffer(
       mid: mid,
     }));
 
+    // Build request body - only include tracks if we have them
+    const requestBody: {
+      sessionDescription: { type: string; sdp: string };
+      tracks?: Array<{ location: string; trackName: string; mid: string }>;
+    } = {
+      sessionDescription: {
+        type: offer.type,
+        sdp: offer.sdp,
+      },
+    };
+
+    if (tracks.length > 0) {
+      requestBody.tracks = tracks;
+    }
+
     // Send offer to Cloudflare Calls SFU and get answer
     // For Cloudflare Calls, we use the tracks endpoint to add tracks with SDP
     const tracksResponse = await fetch(
@@ -356,13 +371,7 @@ export async function handleOffer(
           'Authorization': `Bearer ${env.CLOUDFLARE_CALLS_API_TOKEN}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          sessionDescription: {
-            type: offer.type,
-            sdp: offer.sdp,
-          },
-          tracks: tracks.length > 0 ? tracks : undefined,
-        }),
+        body: JSON.stringify(requestBody),
       }
     );
 
