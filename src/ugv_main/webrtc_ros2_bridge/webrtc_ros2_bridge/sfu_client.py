@@ -9,11 +9,33 @@ try:
         RTCSessionDescription,
         RTCConfiguration,
         RTCIceServer,
+        VideoStreamTrack,
     )
-    from aiortc.contrib.media import MediaRelay
+    from aiortc.contrib.media import MediaRelay, MediaPlayer
+    from av import VideoFrame
+    import numpy as np
     AIORTC_AVAILABLE = True
 except ImportError:
     AIORTC_AVAILABLE = False
+
+
+class DummyVideoTrack(VideoStreamTrack):
+    """
+    A dummy video track that generates blank frames.
+    Replace with actual camera feed.
+    """
+    def __init__(self):
+        super().__init__()
+
+    async def recv(self):
+        pts, time_base = await self.next_timestamp()
+        
+        # Create a blank frame (640x480, black)
+        frame = VideoFrame(width=640, height=480)
+        frame.pts = pts
+        frame.time_base = time_base
+        
+        return frame
 
 
 class CloudflareSFUClient:
@@ -95,6 +117,12 @@ class CloudflareSFUClient:
 
             # Step 2: Create RTCPeerConnection with ICE servers
             await self._create_peer_connection()
+
+            # Create a dummy video track if none provided
+            if not self._video_track:
+                if self._logger:
+                    self._logger.info("No video track provided, creating dummy track")
+                self._video_track = DummyVideoTrack()
 
             # Step 3: Create offer and send to SFU
             await self._create_and_send_offer()
@@ -223,6 +251,9 @@ class CloudflareSFUClient:
             self._pc.addTrack(relayed_track)
             if self._logger:
                 self._logger.info("Added video track to SFU connection")
+        else:
+            if self._logger:
+                self._logger.warning("No video track available - SDP will have no media sections")
 
     async def _create_and_send_offer(self):
         """Create offer and send to SFU via Workers API."""

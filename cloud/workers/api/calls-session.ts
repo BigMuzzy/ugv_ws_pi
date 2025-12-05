@@ -339,6 +339,8 @@ export async function handleOffer(
       }
     }
 
+    console.log('Extracted mids from SDP:', mids);
+
     // Build tracks array with mids from SDP
     const tracks = mids.map((mid, index) => ({
       location: 'local',
@@ -360,6 +362,8 @@ export async function handleOffer(
     if (tracks.length > 0) {
       requestBody.tracks = tracks;
     }
+
+    console.log('Request body:', JSON.stringify(requestBody, null, 2));
 
     // Send offer to Cloudflare Calls SFU and get answer
     // For Cloudflare Calls, we use the tracks endpoint to add tracks with SDP
