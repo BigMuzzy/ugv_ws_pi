@@ -98,6 +98,7 @@ class CloudflareSFUClient:
         self._pc = None  # RTCPeerConnection
         self._telemetry_channel = None  # Robot → Viewers (telemetry)
         self._command_channel = None    # For receiving commands (subscribed from viewers)
+        self._server_events_dc = None   # Server events DataChannel (for SCTP transport)
         self._session_id = None
         self._ice_servers = []
         self._relay = MediaRelay() if AIORTC_AVAILABLE else None
@@ -110,7 +111,18 @@ class CloudflareSFUClient:
         self._command_channel_id = None
 
     async def connect(self):
-        """Connect to Cloudflare SFU and create session with DataChannels."""
+        """Connect to Cloudflare SFU and create session with DataChannels.
+        
+        Flow based on Cloudflare echo-datachannels example:
+        1. Create SFU session
+        2. Create PeerConnection
+        3. Add video track
+        4. Create a local DataChannel (to enable SCTP transport in SDP)
+        5. Create offer and send to SFU via /tracks/new
+        6. Set remote description (answer from SFU)
+        7. Wait for ICE connection
+        8. After connected, register DataChannels via /datachannels/new
+        """
         if not AIORTC_AVAILABLE:
             if self._logger:
                 self._logger.error("aiortc not available - cannot connect to SFU")
@@ -133,11 +145,9 @@ class CloudflareSFUClient:
             self._ice_servers = session_info.get('iceServers', [])
 
             if self._logger:
-                self._logger.info(
-                    f"Created SFU session: {self._session_id}"
-                )
+                self._logger.info(f"Created SFU session: {self._session_id}")
 
-            # Create a dummy video track if none provided (BEFORE creating peer connection)
+            # Create a dummy video track if none provided
             if not self._video_track:
                 if self._logger:
                     self._logger.info("No video track provided, creating dummy track")
@@ -146,16 +156,36 @@ class CloudflareSFUClient:
             # Step 2: Create RTCPeerConnection with ICE servers
             await self._create_peer_connection()
 
-            # Step 3: Establish DataChannel transport first (required by Cloudflare Calls)
-            # This creates a "server-events" datachannel which enables the SCTP transport
-            await self._establish_datachannel_transport()
+            # Step 3: Create a local DataChannel to enable SCTP transport
+            # This ensures the SDP has a data channel section
+            if self._logger:
+                self._logger.info("Creating server-events DataChannel for SCTP transport")
+            
+            self._server_events_dc = self._pc.createDataChannel("server-events")
+            
+            @self._server_events_dc.on("open")
+            def on_server_events_open():
+                if self._logger:
+                    self._logger.info("server-events DataChannel opened")
+            
+            @self._server_events_dc.on("message") 
+            def on_server_events_message(message):
+                if self._logger:
+                    self._logger.debug(f"server-events message: {message}")
 
-            # Step 4: Register telemetry DataChannel with SFU (Robot → Viewers)
-            # This allows viewers to subscribe to our telemetry
-            await self._register_telemetry_datachannel()
+            # Step 4: Create offer and send to SFU (this also publishes the video track)
+            connected = await self._create_and_send_offer()
+            
+            if not connected:
+                if self._logger:
+                    self._logger.error("Failed to establish connection with SFU")
+                return False
 
-            # Step 5: Create offer with video track and DataChannels, send to SFU
-            await self._create_and_send_offer()
+            # Step 5: Wait for ICE connection to be established
+            await self._wait_for_connection()
+
+            # Step 6: After connection is established, register DataChannels
+            await self._setup_datachannels()
 
             self._connected = True
             if self._logger:
@@ -166,88 +196,43 @@ class CloudflareSFUClient:
         except Exception as e:
             if self._logger:
                 self._logger.error(f"Error connecting to SFU: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
-    async def _establish_datachannel_transport(self):
-        """
-        Establish the DataChannel transport with the SFU.
-        
-        This is required before we can register/use DataChannels.
-        We create a local 'server-events' datachannel and call the establish endpoint.
-        """
+    async def _wait_for_connection(self, timeout=10):
+        """Wait for the ICE connection to be established."""
         if self._logger:
-            self._logger.info("Establishing DataChannel transport with SFU")
+            self._logger.info("Waiting for ICE connection...")
         
-        # Create a local datachannel to initiate SCTP transport
-        server_events_dc = self._pc.createDataChannel("server-events", negotiated=False)
+        start_time = asyncio.get_event_loop().time()
+        while asyncio.get_event_loop().time() - start_time < timeout:
+            if self._pc.iceConnectionState in ("connected", "completed"):
+                if self._logger:
+                    self._logger.info(f"ICE connection established: {self._pc.iceConnectionState}")
+                return True
+            if self._pc.iceConnectionState == "failed":
+                if self._logger:
+                    self._logger.error("ICE connection failed")
+                return False
+            await asyncio.sleep(0.1)
         
-        @server_events_dc.on("open")
-        def on_open():
-            if self._logger:
-                self._logger.info("server-events DataChannel opened")
-        
-        @server_events_dc.on("message")
-        def on_message(message):
-            if self._logger:
-                self._logger.debug(f"server-events message: {message}")
-        
-        # Create offer for establish
-        offer = await self._pc.createOffer()
-        await self._pc.setLocalDescription(offer)
-        
-        # Call the establish endpoint
-        try:
-            url = f"{self._workers_endpoint}/api/sessions/{self._robot_id}/datachannels/establish"
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    url,
-                    json={
-                        'sessionDescription': {
-                            'type': self._pc.localDescription.type,
-                            'sdp': self._pc.localDescription.sdp
-                        },
-                        'dataChannel': {
-                            'location': 'remote',
-                            'dataChannelName': 'server-events'
-                        }
-                    },
-                    timeout=aiohttp.ClientTimeout(total=15)
-                ) as response:
-                    if response.status != 200:
-                        error_text = await response.text()
-                        if self._logger:
-                            self._logger.warning(
-                                f"DataChannel establish returned {response.status}: {error_text}"
-                            )
-                        return
-                    
-                    data = await response.json()
-                    
-                    # If we got an answer, set it
-                    if data.get('requiresImmediateRenegotiation') and data.get('sessionDescription'):
-                        from aiortc import RTCSessionDescription
-                        remote_desc = RTCSessionDescription(
-                            sdp=data['sessionDescription']['sdp'],
-                            type=data['sessionDescription']['type']
-                        )
-                        await self._pc.setRemoteDescription(remote_desc)
-                        if self._logger:
-                            self._logger.info("DataChannel transport established with SFU")
-        except Exception as e:
-            if self._logger:
-                self._logger.warning(f"Error establishing DataChannel transport: {e}")
+        if self._logger:
+            self._logger.warning(f"ICE connection timeout, state: {self._pc.iceConnectionState}")
+        # Continue anyway, might still work
+        return True
 
-    async def _register_telemetry_datachannel(self):
+    async def _setup_datachannels(self):
         """
-        Register a DataChannel for telemetry (Robot → Viewers).
+        Set up DataChannels after connection is established.
         
-        Cloudflare Calls DataChannels are unidirectional.
-        We publish 'telemetry' channel that viewers can subscribe to.
+        Register telemetry channel (Robot → Viewers) with the SFU.
         """
         if self._logger:
-            self._logger.info("Registering telemetry DataChannel with SFU")
+            self._logger.info("Setting up DataChannels after connection established")
         
         try:
+            # Register telemetry DataChannel with SFU
             url = f"{self._workers_endpoint}/api/sessions/{self._robot_id}/datachannels/new"
             async with aiohttp.ClientSession() as session:
                 async with session.post(
@@ -266,6 +251,7 @@ class CloudflareSFUClient:
                             self._logger.warning(
                                 f"Failed to register telemetry DataChannel: {response.status} - {error_text}"
                             )
+                        # Continue without telemetry channel
                         return
                     
                     data = await response.json()
@@ -285,19 +271,17 @@ class CloudflareSFUClient:
                             )
                             
                             @self._telemetry_channel.on("open")
-                            def on_open():
+                            def on_telemetry_open():
                                 if self._logger:
                                     self._logger.info("Telemetry DataChannel opened")
                             
                             @self._telemetry_channel.on("error")
-                            def on_error(error):
+                            def on_telemetry_error(error):
                                 if self._logger:
                                     self._logger.error(f"Telemetry DataChannel error: {error}")
         except Exception as e:
             if self._logger:
-                self._logger.warning(f"Error registering telemetry DataChannel: {e}")
-            if self._logger:
-                self._logger.error(f"Error connecting to SFU: {e}")
+                self._logger.warning(f"Error setting up DataChannels: {e}")
             return False
 
     async def _create_sfu_session(self):
@@ -464,7 +448,10 @@ class CloudflareSFUClient:
                 self._logger.error(f"Error handling message: {e}")
 
     async def _create_and_send_offer(self):
-        """Create offer and send to SFU via Workers API."""
+        """Create offer and send to SFU via Workers API.
+        
+        Returns True if successful, False otherwise.
+        """
         # Create offer
         offer = await self._pc.createOffer()
         await self._pc.setLocalDescription(offer)
@@ -484,7 +471,7 @@ class CloudflareSFUClient:
                             'sdp': self._pc.localDescription.sdp
                         }
                     },
-                    timeout=aiohttp.ClientTimeout(total=10)
+                    timeout=aiohttp.ClientTimeout(total=15)
                 ) as response:
                     if response.status != 200:
                         error_text = await response.text()
@@ -492,7 +479,7 @@ class CloudflareSFUClient:
                             self._logger.error(
                                 f"Failed to send offer: {response.status} - {error_text}"
                             )
-                        return
+                        return False
 
                     data = await response.json()
                     answer = data.get('answer')
@@ -500,7 +487,7 @@ class CloudflareSFUClient:
                     if not answer:
                         if self._logger:
                             self._logger.error("No answer received from SFU")
-                        return
+                        return False
 
                     # Set remote description with answer
                     from aiortc import RTCSessionDescription
@@ -512,13 +499,17 @@ class CloudflareSFUClient:
 
                     if self._logger:
                         self._logger.info("Set remote description from SFU answer")
+                    
+                    return True
 
         except asyncio.TimeoutError:
             if self._logger:
                 self._logger.error("Timeout sending offer to SFU")
+            return False
         except Exception as e:
             if self._logger:
                 self._logger.error(f"Error sending offer: {e}")
+            return False
 
     async def disconnect(self):
         """Disconnect from SFU and clean up resources."""
