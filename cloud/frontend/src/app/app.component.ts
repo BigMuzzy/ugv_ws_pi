@@ -193,12 +193,13 @@ export class AppComponent implements OnInit {
         }
       };
 
-      // Create DataChannel explicitly (negotiated: true, id: 1) to match Robot
-      console.log("Creating 'commands' DataChannel (negotiated: true, id: 1)");
-      this.dataChannel = this.pc.createDataChannel('commands', { negotiated: true, id: 1 });
-      this.dataChannel.onopen = () => console.log('Data channel opened');
-      this.dataChannel.onmessage = (msg) => console.log('Received message:', msg.data);
-      this.dataChannel.onerror = (err) => console.error('Data channel error:', err);
+      // Handle incoming data channel
+      this.pc.ondatachannel = (event) => {
+        console.log('Received data channel:', event.channel.label);
+        this.dataChannel = event.channel;
+        this.dataChannel.onopen = () => console.log('Data channel opened');
+        this.dataChannel.onmessage = (msg) => console.log('Received message:', msg.data);
+      };
 
       // Add transceiver to receive video from robot
       this.pc.addTransceiver('video', { direction: 'recvonly' });
