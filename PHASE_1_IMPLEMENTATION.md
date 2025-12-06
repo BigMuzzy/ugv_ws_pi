@@ -1,7 +1,7 @@
 # Phase 1: Cloudflare Calls Integration - Implementation Guide
 
-**Status:** ✅ Workers API Fully Operational - Ready for Robot Integration  
-**Date:** December 4, 2025  
+**Status:** ⚠️ Teleoperation Integration & Debugging  
+**Date:** December 5, 2025  
 **Last Updated:** December 5, 2025
 
 ---
@@ -56,14 +56,16 @@
 
 ### 3. ✅ Frontend SFU Client (`cloud/frontend/`)
 
-**Files Created:**
-- `src/lib/sfuClient.ts` - SFUClient class
+**Files Created/Modified:**
+- `src/app/app.component.ts` - Main logic for WebRTC and Joystick
+- `src/lib/sfuClient.ts` - (Merged into app.component.ts for Phase 1)
 
 **Features:**
 - Fetches session info from Workers API
-- Connects to SFU as viewer
+- Connects to SFU as viewer (Server-Side Offer)
 - Receives video stream from robot
-- Sends commands via DataChannel
+- **Teleoperation:** Virtual Joystick implemented using `nipplejs` (Direct integration)
+- Sends commands via DataChannel (JSON format)
 - Latency monitoring (ping/pong)
 - Automatic reconnection
 - React hook placeholder (useSFUClient)
@@ -233,16 +235,17 @@ npm start
 
 ### 🚧 DataChannel & Teleop
 
-The video stream is working, but teleoperation (DataChannel) needs to be enabled:
+The video stream is working. Teleoperation code is implemented but currently being debugged:
 
-1. **Enable DataChannel in Frontend:**
-   - Uncomment DataChannel creation in `app.component.ts`
-   - Implement gamepad input handling
-   - Send commands via DataChannel
+1. **Frontend:**
+   - `nipplejs` integrated directly (removed `ngx-joystick` due to injection errors).
+   - Joystick sends `{ type: 'command', linear: x, angular: z }` via DataChannel.
+   - Logging added to verify message transmission.
 
-2. **Verify Robot-Side Handling:**
-   - Ensure `sfu_client.py` correctly receives and parses commands
-   - Verify `bridge_node.py` executes commands
+2. **Robot-Side:**
+   - `sfu_client.py` configured to receive DataChannel messages.
+   - Logging added to verify message reception.
+   - **Current Issue:** Verifying end-to-end flow of commands to `cmd_vel`.
 
 ### 🎯 Next Steps
 

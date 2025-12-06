@@ -351,7 +351,7 @@ Prepare infrastructure, set up dev environment
 ### Phase 1: Cloudflare Calls Integration
 
 **Duration:** 2 weeks
-**Status:** Not Started
+**Status:** 🟡 In Progress
 
 #### Goals
 Migrate WebRTC from P2P to SFU model

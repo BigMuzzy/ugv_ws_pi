@@ -400,8 +400,12 @@ export async function handleOffer(
     }
 
     // Store the tracks info in session
-    sessionInfo.tracks = tracksData.tracks;
-    sessionInfo.offer = offer; // Store the robot's offer
+    // We store the tracks we requested to create, as they contain the correct trackNames and mids
+    sessionInfo.tracks = tracks;
+    sessionInfo.offer = {
+      type: 'offer',
+      sdp: offer.sdp!
+    };
     await env.ROBOT_REGISTRY.put(
       `session:${robotId}`,
       JSON.stringify(sessionInfo),
@@ -476,31 +480,11 @@ export async function handlePull(
 
     console.log('Created viewer session:', viewerSessionData.sessionId);
 
-    // Fetch authoritative session details from Cloudflare to get active tracks
-    let activeTracks: Array<{ trackName: string; mid: string; status: string; sessionId?: string }> = [];
-    try {
-      const sessionDetailsResponse = await fetch(
-        `${CALLS_API_BASE}/apps/${env.CLOUDFLARE_CALLS_APP_ID}/sessions/${sessionInfo.sessionId}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${env.CLOUDFLARE_CALLS_API_TOKEN}`,
-          },
-        }
-      );
-      
-      if (sessionDetailsResponse.ok) {
-        const sessionDetails = await sessionDetailsResponse.json() as { tracks?: Array<any> };
-        // Filter for active local tracks in the robot session
-        activeTracks = (sessionDetails.tracks || []).filter((t: any) => 
-          t.status === 'active' && t.location === 'local'
-        );
-        console.log('Active tracks in robot session:', JSON.stringify(activeTracks));
-      } else {
-        console.warn('Failed to fetch robot session details');
-      }
-    } catch (e) {
-      console.error('Error fetching session details:', e);
-    }
+    // Use tracks from session info (KV)
+    // This is more reliable than fetching from Cloudflare API as it includes DataChannels
+    // which might not be reported as "active" in the same way as video tracks
+    const activeTracks = (sessionInfo.tracks || []) as Array<{ trackName: string; mid: string; location: string; sessionId?: string }>;
+    console.log('Active tracks in robot session (from KV):', JSON.stringify(activeTracks));
 
     // If we have an offer (Client-Side Offer)
     if (offer && offer.sdp) {

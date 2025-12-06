@@ -126,8 +126,8 @@ class CloudflareSFUClient:
 
             # Explicitly create the DataChannel to ensure the track is active
             if self._logger:
-                self._logger.info("Creating 'commands' DataChannel")
-            self._data_channel = self._pc.createDataChannel("commands")
+                self._logger.info("Creating 'commands' DataChannel (negotiated=True, id=1)")
+            self._data_channel = self._pc.createDataChannel("commands", negotiated=True, id=1)
             
             @self._data_channel.on("open")
             def on_open():
