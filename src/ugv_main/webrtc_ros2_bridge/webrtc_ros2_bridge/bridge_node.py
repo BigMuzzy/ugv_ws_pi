@@ -60,6 +60,11 @@ class WebRTCBridgeNode(Node):
         # Initialize Video Source (Shared if possible, but for now separate if needed)
         # If we use SFU, we need a video source.
         self._video_source = None
+        
+        # Log configuration for debugging
+        self.get_logger().info(f"Fleet config: worker_url={fleet_config.get('worker_url')}, robot_id={fleet_config.get('robot_id')}")
+        self.get_logger().info(f"Cloudflare config: app_id={'***' if cloudflare_config.get('app_id') else '(not set)'}")
+        
         if cloudflare_config.get("app_id"):
              self._video_source = VideoSource(
                 device=video_config.get("device", "/dev/video0"),
@@ -73,6 +78,7 @@ class WebRTCBridgeNode(Node):
         self._calls_client = None
         self._sfu_manager = None
         if cloudflare_config.get("app_id"):
+            self.get_logger().info("Initializing Cloudflare Calls client...")
             self._calls_client = CloudflareCallsClient(
                 app_id=cloudflare_config.get("app_id"),
                 app_token=cloudflare_config.get("app_token"),
@@ -84,10 +90,16 @@ class WebRTCBridgeNode(Node):
                 on_command=self._on_command,
                 logger=self.get_logger()
             )
+        else:
+            self.get_logger().warning(
+                "Cloudflare app_id not configured! Set CLOUDFLARE_APP_ID and CLOUDFLARE_APP_TOKEN "
+                "environment variables or configure in bridge_config.yaml"
+            )
 
         # Initialize Signaling Client (Fleet)
         self._signaling_client = None
         if fleet_config.get("worker_url") and self._calls_client:
+            self.get_logger().info(f"Initializing Fleet signaling client to {fleet_config.get('worker_url')}...")
             self._signaling_client = SignalingClient(
                 worker_url=fleet_config.get("worker_url"),
                 robot_id=fleet_config.get("robot_id", "robot1"),
@@ -95,6 +107,11 @@ class WebRTCBridgeNode(Node):
                 on_subscribe_cmd=self._on_subscribe_cmd,
                 get_video_track_name=self._get_video_track_name,
                 logger=self.get_logger()
+            )
+        elif fleet_config.get("worker_url") and not self._calls_client:
+            self.get_logger().warning(
+                "Fleet worker_url is configured but Cloudflare client not initialized - "
+                "signaling client disabled"
             )
 
         # Initialize signaling server (Local) - REMOVED OLD TURN SOLUTION
