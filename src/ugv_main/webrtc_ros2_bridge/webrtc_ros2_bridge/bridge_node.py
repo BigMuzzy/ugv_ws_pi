@@ -15,8 +15,6 @@ except ImportError:
     YAML_AVAILABLE = False
 
 from .command_handler import CommandHandler
-from .signaling_server import SignalingServer, AIOHTTP_AVAILABLE
-from .webrtc_manager import AIORTC_AVAILABLE
 from .cloudflare_calls import CloudflareCallsClient
 from .signaling_client import SignalingClient
 from .sfu_manager import SFUManager
@@ -114,37 +112,13 @@ class WebRTCBridgeNode(Node):
                 "signaling client disabled"
             )
 
-        # Initialize signaling server (Local) - REMOVED OLD TURN SOLUTION
-        # if AIOHTTP_AVAILABLE:
-        #     self._server = SignalingServer(
-        #         host=server_config.get("host", "0.0.0.0"),
-        #         port=server_config.get("port", 8080),
-        #         static_dir=static_dir,
-        #         on_command=self._on_command,
-        #         on_emergency_stop=self._on_emergency_stop,
-        #         video_config=video_config,
-        #         webrtc_config=webrtc_config,
-        #         logger=self.get_logger()
-        #     )
-        # else:
-        self._server = None
-        #     self.get_logger().error(
-        #         "aiohttp not available - signaling server disabled"
-        #     )
-
         # Start async event loop in separate thread
         self._loop = None
         self._loop_thread = None
-        if self._server or self._signaling_client:
+        if self._signaling_client:
             self._start_async_loop()
 
         self.get_logger().info("WebRTC Bridge Node initialized")
-
-        if not AIORTC_AVAILABLE:
-            self.get_logger().warning(
-                "aiortc not available - WebRTC features disabled. "
-                "Install with: pip install aiortc"
-            )
 
     def _declare_parameters(self):
         """Declare ROS2 parameters."""
@@ -252,36 +226,6 @@ class WebRTCBridgeNode(Node):
                 "app_id": self.get_parameter("cloudflare.app_id").value,
                 "app_token": self.get_parameter("cloudflare.app_token").value,
             },
-            "webrtc": {
-                "stun_servers": [
-                    "stun:stun.l.google.com:19302",
-                    "stun:stun1.l.google.com:19302",
-                    "stun:stun.relay.metered.ca:80"
-                ],
-                # Metered.ca TURN servers (free tier) for NAT traversal
-                "turn_servers": [
-                    {
-                        "url": "turn:global.relay.metered.ca:80",
-                        "username": "bbded4f052d4c3c9e8e6342f",
-                        "credential": "UWI3yEJTIVm+nT0J"
-                    },
-                    {
-                        "url": "turn:global.relay.metered.ca:80?transport=tcp",
-                        "username": "bbded4f052d4c3c9e8e6342f",
-                        "credential": "UWI3yEJTIVm+nT0J"
-                    },
-                    {
-                        "url": "turn:global.relay.metered.ca:443",
-                        "username": "bbded4f052d4c3c9e8e6342f",
-                        "credential": "UWI3yEJTIVm+nT0J"
-                    },
-                    {
-                        "url": "turns:global.relay.metered.ca:443?transport=tcp",
-                        "username": "bbded4f052d4c3c9e8e6342f",
-                        "credential": "UWI3yEJTIVm+nT0J"
-                    }
-                ],
-            }
         }
 
         # Try to load from config file if specified
