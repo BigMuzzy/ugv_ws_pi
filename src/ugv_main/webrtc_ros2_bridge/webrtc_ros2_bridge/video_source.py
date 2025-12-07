@@ -22,6 +22,17 @@ try:
 except ImportError:
     AV_AVAILABLE = False
 
+try:
+    from aiortc import MediaStreamTrack
+    AIORTC_AVAILABLE = True
+except ImportError:
+    AIORTC_AVAILABLE = False
+    # Dummy base class if aiortc not available
+    class MediaStreamTrack:
+        kind = "video"
+        def stop(self):
+            pass
+
 
 class VideoSource:
     """Capture video from camera device for WebRTC streaming."""
@@ -219,7 +230,7 @@ class VideoSource:
         return self._running
 
 
-class VideoStreamTrack:
+class VideoStreamTrack(MediaStreamTrack):
     """
     Video stream track for WebRTC.
 
@@ -237,10 +248,12 @@ class VideoStreamTrack:
             video_source: VideoSource instance
             logger: Logger instance
         """
+        super().__init__()  # Initialize MediaStreamTrack base class
         self._source = video_source
         self._logger = logger
         self._timestamp = 0
         self._time_base = fractions.Fraction(1, 90000)
+        self._started = False
 
     async def recv(self):
         """
@@ -252,6 +265,12 @@ class VideoStreamTrack:
         if not AV_AVAILABLE or not NUMPY_AVAILABLE:
             await asyncio.sleep(1.0 / self._source.fps)
             return None
+
+        # Start video source on first recv if not already started
+        if not self._started:
+            if not self._source.is_running:
+                self._source.start()
+            self._started = True
 
         # Get frame from camera
         frame_rgb = self._source.get_frame_rgb()
