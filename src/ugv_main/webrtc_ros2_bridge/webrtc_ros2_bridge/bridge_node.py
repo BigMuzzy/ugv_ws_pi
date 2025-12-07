@@ -96,26 +96,23 @@ class WebRTCBridgeNode(Node):
                 logger=self.get_logger()
             )
 
-        # Initialize signaling server (Local)
-        if AIOHTTP_AVAILABLE:
-            # Note: This might conflict with _video_source if both try to open the camera.
-            # Ideally we should pass _video_source to SignalingServer, but it creates its own.
-            # For now, we assume if Fleet is configured, we might not use Local Server or we accept the conflict/error.
-            self._server = SignalingServer(
-                host=server_config.get("host", "0.0.0.0"),
-                port=server_config.get("port", 8080),
-                static_dir=static_dir,
-                on_command=self._on_command,
-                on_emergency_stop=self._on_emergency_stop,
-                video_config=video_config,
-                webrtc_config=webrtc_config,
-                logger=self.get_logger()
-            )
-        else:
-            self._server = None
-            self.get_logger().error(
-                "aiohttp not available - signaling server disabled"
-            )
+        # Initialize signaling server (Local) - REMOVED OLD TURN SOLUTION
+        # if AIOHTTP_AVAILABLE:
+        #     self._server = SignalingServer(
+        #         host=server_config.get("host", "0.0.0.0"),
+        #         port=server_config.get("port", 8080),
+        #         static_dir=static_dir,
+        #         on_command=self._on_command,
+        #         on_emergency_stop=self._on_emergency_stop,
+        #         video_config=video_config,
+        #         webrtc_config=webrtc_config,
+        #         logger=self.get_logger()
+        #     )
+        # else:
+        self._server = None
+        #     self.get_logger().error(
+        #         "aiohttp not available - signaling server disabled"
+        #     )
 
         # Start async event loop in separate thread
         self._loop = None
@@ -326,6 +323,7 @@ class WebRTCBridgeNode(Node):
         """Initialize async components."""
         if self._calls_client:
             try:
+                self.get_logger().info(f"Initializing Cloudflare Calls with App ID: {self._calls_client.app_id[:4]}...")
                 await self._calls_client.create_session()
                 if self._sfu_manager:
                     await self._sfu_manager.connect()
@@ -337,6 +335,7 @@ class WebRTCBridgeNode(Node):
             
         if self._signaling_client:
             # Start signaling client in background
+            self.get_logger().info(f"Starting Signaling Client to {self._signaling_client.worker_url}")
             asyncio.create_task(self._signaling_client.start())
 
     async def _on_subscribe_cmd(self, session_id, channel):
