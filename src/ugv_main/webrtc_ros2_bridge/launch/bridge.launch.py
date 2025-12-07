@@ -68,6 +68,32 @@ def generate_launch_description():
         description='Maximum angular velocity (rad/s)'
     )
 
+    # Fleet arguments
+    fleet_worker_url_arg = DeclareLaunchArgument(
+        'fleet_worker_url',
+        default_value='',
+        description='Fleet Worker WebSocket URL'
+    )
+
+    robot_id_arg = DeclareLaunchArgument(
+        'robot_id',
+        default_value='robot1',
+        description='Robot ID'
+    )
+
+    # Cloudflare arguments
+    cloudflare_app_id_arg = DeclareLaunchArgument(
+        'cloudflare_app_id',
+        default_value='',
+        description='Cloudflare Calls App ID'
+    )
+
+    cloudflare_app_token_arg = DeclareLaunchArgument(
+        'cloudflare_app_token',
+        default_value='',
+        description='Cloudflare Calls App Token'
+    )
+
     # Create bridge node
     bridge_node = Node(
         package='webrtc_ros2_bridge',
@@ -83,6 +109,10 @@ def generate_launch_description():
             'robot.cmd_vel_topic': LaunchConfiguration('cmd_vel_topic'),
             'robot.max_linear_speed': LaunchConfiguration('max_linear_speed'),
             'robot.max_angular_speed': LaunchConfiguration('max_angular_speed'),
+            'fleet.worker_url': LaunchConfiguration('fleet_worker_url'),
+            'fleet.robot_id': LaunchConfiguration('robot_id'),
+            'cloudflare.app_id': LaunchConfiguration('cloudflare_app_id'),
+            'cloudflare.app_token': LaunchConfiguration('cloudflare_app_token'),
             'config_file': config_file,
         }],
         output='screen',
@@ -99,5 +129,9 @@ def generate_launch_description():
         cmd_vel_topic_arg,
         max_linear_speed_arg,
         max_angular_speed_arg,
+        fleet_worker_url_arg,
+        robot_id_arg,
+        cloudflare_app_id_arg,
+        cloudflare_app_token_arg,
         bridge_node,
     ])
