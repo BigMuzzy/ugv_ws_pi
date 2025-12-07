@@ -20,7 +20,7 @@ setup(
         (os.path.join('share', package_name, 'static'),
             glob(os.path.join('static', '*'))),
     ],
-    install_requires=['setuptools'],
+    install_requires=['setuptools', 'websockets', 'aiohttp', 'requests', 'aiortc'],
     zip_safe=True,
     maintainer='dudu',
     maintainer_email='dudu@todo.todo',

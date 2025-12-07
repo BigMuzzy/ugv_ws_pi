@@ -17,6 +17,10 @@ except ImportError:
 from .command_handler import CommandHandler
 from .signaling_server import SignalingServer, AIOHTTP_AVAILABLE
 from .webrtc_manager import AIORTC_AVAILABLE
+from .cloudflare_calls import CloudflareCallsClient
+from .signaling_client import SignalingClient
+from .sfu_manager import SFUManager
+from .video_source import VideoSource
 
 
 class WebRTCBridgeNode(Node):
@@ -37,6 +41,8 @@ class WebRTCBridgeNode(Node):
         video_config = config.get("video", {})
         webrtc_config = config.get("webrtc", {})
         server_config = config.get("server", {})
+        fleet_config = config.get("fleet", {})
+        cloudflare_config = config.get("cloudflare", {})
 
         # Initialize command handler
         self._command_handler = CommandHandler(
@@ -51,8 +57,50 @@ class WebRTCBridgeNode(Node):
         # Get static files directory
         static_dir = self._get_static_dir()
 
-        # Initialize signaling server
+        # Initialize Video Source (Shared if possible, but for now separate if needed)
+        # If we use SFU, we need a video source.
+        self._video_source = None
+        if cloudflare_config.get("app_id"):
+             self._video_source = VideoSource(
+                device=video_config.get("device", "/dev/video0"),
+                width=video_config.get("width", 640),
+                height=video_config.get("height", 480),
+                fps=video_config.get("fps", 30),
+                logger=self.get_logger()
+            )
+
+        # Initialize Cloudflare Calls Client
+        self._calls_client = None
+        self._sfu_manager = None
+        if cloudflare_config.get("app_id"):
+            self._calls_client = CloudflareCallsClient(
+                app_id=cloudflare_config.get("app_id"),
+                app_token=cloudflare_config.get("app_token"),
+                logger=self.get_logger()
+            )
+            self._sfu_manager = SFUManager(
+                calls_client=self._calls_client,
+                video_source=self._video_source,
+                on_command=self._on_command,
+                logger=self.get_logger()
+            )
+
+        # Initialize Signaling Client (Fleet)
+        self._signaling_client = None
+        if fleet_config.get("worker_url") and self._calls_client:
+            self._signaling_client = SignalingClient(
+                worker_url=fleet_config.get("worker_url"),
+                robot_id=fleet_config.get("robot_id", "robot1"),
+                calls_client=self._calls_client,
+                on_subscribe_cmd=self._on_subscribe_cmd,
+                logger=self.get_logger()
+            )
+
+        # Initialize signaling server (Local)
         if AIOHTTP_AVAILABLE:
+            # Note: This might conflict with _video_source if both try to open the camera.
+            # Ideally we should pass _video_source to SignalingServer, but it creates its own.
+            # For now, we assume if Fleet is configured, we might not use Local Server or we accept the conflict/error.
             self._server = SignalingServer(
                 host=server_config.get("host", "0.0.0.0"),
                 port=server_config.get("port", 8080),
@@ -72,7 +120,7 @@ class WebRTCBridgeNode(Node):
         # Start async event loop in separate thread
         self._loop = None
         self._loop_thread = None
-        if self._server:
+        if self._server or self._signaling_client:
             self._start_async_loop()
 
         self.get_logger().info("WebRTC Bridge Node initialized")
@@ -152,6 +200,14 @@ class WebRTCBridgeNode(Node):
             "",
             ParameterDescriptor(description="Path to configuration file")
         )
+        
+        # Fleet parameters
+        self.declare_parameter("fleet.worker_url", "", ParameterDescriptor(description="Fleet Worker WebSocket URL"))
+        self.declare_parameter("fleet.robot_id", "robot1", ParameterDescriptor(description="Robot ID"))
+        
+        # Cloudflare parameters
+        self.declare_parameter("cloudflare.app_id", "", ParameterDescriptor(description="Cloudflare Calls App ID"))
+        self.declare_parameter("cloudflare.app_token", "", ParameterDescriptor(description="Cloudflare Calls App Token"))
 
     def _load_config(self):
         """Load configuration from file or parameters."""
@@ -172,6 +228,14 @@ class WebRTCBridgeNode(Node):
                 "max_angular_speed": self.get_parameter("robot.max_angular_speed").value,
                 "command_timeout_ms": self.get_parameter("robot.command_timeout_ms").value,
                 "publish_rate_hz": self.get_parameter("robot.publish_rate_hz").value,
+            },
+            "fleet": {
+                "worker_url": self.get_parameter("fleet.worker_url").value,
+                "robot_id": self.get_parameter("fleet.robot_id").value,
+            },
+            "cloudflare": {
+                "app_id": self.get_parameter("cloudflare.app_id").value,
+                "app_token": self.get_parameter("cloudflare.app_token").value,
             },
             "webrtc": {
                 "stun_servers": [
@@ -249,14 +313,48 @@ class WebRTCBridgeNode(Node):
             self._loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._loop)
 
-            # Start server
-            self._loop.run_until_complete(self._server.start())
+            # Run initialization
+            self._loop.run_until_complete(self._async_init())
 
             # Run event loop
             self._loop.run_forever()
 
         self._loop_thread = threading.Thread(target=run_loop, daemon=True)
         self._loop_thread.start()
+
+    async def _async_init(self):
+        """Initialize async components."""
+        if self._calls_client:
+            try:
+                await self._calls_client.create_session()
+                if self._sfu_manager:
+                    await self._sfu_manager.connect()
+            except Exception as e:
+                self.get_logger().error(f"Failed to initialize Cloudflare Calls: {e}")
+
+        if self._server:
+            await self._server.start()
+            
+        if self._signaling_client:
+            # Start signaling client in background
+            asyncio.create_task(self._signaling_client.start())
+
+    async def _on_subscribe_cmd(self, session_id, channel):
+        """Handle subscribe command from Fleet Worker."""
+        self.get_logger().info(f"Subscribing to remote channel {channel} from session {session_id}")
+        if self._calls_client:
+            try:
+                # Request SFU to bridge the channel
+                # Note: This assumes we have an active WebRTC connection to the SFU
+                # and that creating the datachannel via API is sufficient or triggers negotiation.
+                await self._calls_client.create_datachannel(
+                    session_id=self._calls_client.session_id,
+                    channel_name=channel,
+                    type="remote",
+                    remote_session_id=session_id
+                )
+            except Exception as e:
+                self.get_logger().error(f"Failed to subscribe to channel: {e}")
 
     def _on_command(self, linear_x, linear_y, linear_z,
                     angular_x, angular_y, angular_z):

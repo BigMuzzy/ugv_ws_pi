@@ -31,3 +31,22 @@ src/ugv_else/vizanti
 
 # Node.js
 node_modules/
+npm-debug.log
+yarn-error.log
+
+# Cloudflare Workers
+.wrangler/
+cloud/workers/fleet-worker/.wrangler/
+cloud/workers/fleet-worker/node_modules/
+cloud/workers/fleet-worker/dist/
+cloud/workers/fleet-worker/worker/
+
+# Verification Scripts
+verify_phase1.js
+verify_phase2_mock.py
+
+# Python Virtual Environments
+venv/
+.venv/
+env/
+
