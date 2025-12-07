@@ -165,6 +165,12 @@ class SFUManager:
                     )
                     self.data_channels[channel_name] = channel
                     self._setup_datachannel(channel)
+                    
+                    # Debug: Check SCTP transport state
+                    if hasattr(self.pc, '_RTCPeerConnection__sctp') and self.pc._RTCPeerConnection__sctp:
+                        sctp = self.pc._RTCPeerConnection__sctp
+                        self.logger.info(f"SCTP state: {sctp.state if hasattr(sctp, 'state') else 'unknown'}")
+                    
                     self.logger.info(f"Created negotiated DataChannel '{channel_name}' with id={dc_id}, readyState={channel.readyState}")
                     
                     # Wait for channel to open

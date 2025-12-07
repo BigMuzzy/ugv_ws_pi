@@ -205,13 +205,9 @@
                     log(`Received datachannel: ${event.channel.label}`, 'success');
                 };
                 
-                // 3. Create cmd_vel DataChannel (local - we send commands)
-                cmdVelChannel = peerConnection.createDataChannel('cmd_vel', { ordered: true });
-                cmdVelChannel.onopen = () => log('cmd_vel channel opened', 'success');
-                cmdVelChannel.onclose = () => log('cmd_vel channel closed');
-                cmdVelChannel.onerror = (e) => log(`cmd_vel error: ${e}`, 'error');
-                
-                // 4. Add recvonly transceiver for video
+                // 3. Add recvonly transceiver for video
+                // NOTE: We'll create the cmd_vel DataChannel AFTER registering with SFU
+                // so we can use the negotiated ID returned by the SFU
                 peerConnection.addTransceiver('video', { direction: 'recvonly' });
                 
                 // Session created, but we'll do SDP negotiation when connecting to robot
@@ -324,7 +320,7 @@
                 });
                 log('ICE connected!', 'success');
                 
-                // 6. Register our DataChannel with SFU
+                // 6. Register our DataChannel with SFU and create it with the returned ID
                 const dcResp = await fetch(`${CALLS_API_BASE}/${appId}/sessions/${operatorSessionId}/datachannels/new`, {
                     method: 'POST',
                     headers: getHeaders(),
@@ -338,7 +334,24 @@
                 const dcData = await dcResp.json();
                 log(`DataChannel registered: ${JSON.stringify(dcData)}`);
                 
-                // Small delay for SFU to process DataChannel
+                // Create the DataChannel with the SFU-assigned ID (CRITICAL for routing!)
+                if (dcData.dataChannels && dcData.dataChannels[0] && dcData.dataChannels[0].id !== undefined) {
+                    const dcId = dcData.dataChannels[0].id;
+                    cmdVelChannel = peerConnection.createDataChannel('cmd_vel', {
+                        negotiated: true,
+                        id: dcId,
+                        ordered: true
+                    });
+                    cmdVelChannel.onopen = () => log(`cmd_vel channel opened (id=${dcId})`, 'success');
+                    cmdVelChannel.onclose = () => log('cmd_vel channel closed');
+                    cmdVelChannel.onerror = (e) => log(`cmd_vel error: ${e}`, 'error');
+                    log(`Created negotiated DataChannel cmd_vel with id=${dcId}`);
+                } else {
+                    log('Failed to get DataChannel ID from SFU', 'error');
+                    return;
+                }
+                
+                // Small delay for DataChannel to open
                 await new Promise(resolve => setTimeout(resolve, 500));
                 
                 // 7. Signal robot to subscribe to our cmd_vel channel
