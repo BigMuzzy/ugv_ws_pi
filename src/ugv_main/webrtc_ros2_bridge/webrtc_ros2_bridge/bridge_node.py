@@ -307,9 +307,6 @@ class WebRTCBridgeNode(Node):
             except Exception as e:
                 self.get_logger().error(f"Failed to initialize Cloudflare Calls: {e}")
 
-        if self._server:
-            await self._server.start()
-            
         if self._signaling_client:
             # Start signaling client in background
             self.get_logger().info(f"Starting Signaling Client to {self._signaling_client.worker_url}")
@@ -353,13 +350,8 @@ class WebRTCBridgeNode(Node):
 
     def destroy_node(self):
         """Clean up resources."""
-        # Stop server
-        if self._server and self._loop:
-            asyncio.run_coroutine_threadsafe(
-                self._server.stop(),
-                self._loop
-            ).result(timeout=5.0)
-
+        # Stop async loop
+        if self._loop:
             self._loop.call_soon_threadsafe(self._loop.stop)
             if self._loop_thread:
                 self._loop_thread.join(timeout=2.0)
