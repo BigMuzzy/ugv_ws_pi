@@ -1,253 +1,238 @@
+# WebRTC ROS2 Bridge
+
+A ROS2 package that enables low-latency remote teleoperation of robots via WebRTC, using **Cloudflare Calls SFU** for media relay and **Cloudflare Workers** for fleet management.
+
+## Architecture Overview
+
 ```mermaid
 graph TB
-    subgraph "Peer A Network"
-        A[Peer A<br/>Browser/App]
-        NAT_A[NAT/Firewall A]
+    subgraph "Robot (Raspberry Pi)"
+        ROS[ROS2 Nodes]
+        BRIDGE[webrtc_ros2_bridge]
+        CAM[Camera]
     end
     
-    subgraph "Peer B Network"
-        B[Peer B<br/>Browser/App]
-        NAT_B[NAT/Firewall B]
+    subgraph "Cloudflare Edge"
+        SFU[Cloudflare Calls SFU<br/>Video + DataChannel Relay]
+        WORKER[Fleet Worker<br/>Robot Registry + Signaling]
+        KV[(Workers KV<br/>Robot State)]
     end
     
-    subgraph "Public Internet"
-        SS[Signaling Server<br/>WebSocket/HTTP]
-        STUN[STUN Server<br/>Discovers public IP]
-        TURN[TURN Server<br/>Relay fallback]
+    subgraph "Operator"
+        UI[Web Browser<br/>test_operator.html]
+        JOY[Joystick/Keyboard]
     end
     
-    A <-.->|1. Signal Exchange| SS
-    B <-.->|1. Signal Exchange| SS
-    A -.->|2. Get Public IP| STUN
-    B -.->|2. Get Public IP| STUN
-    A <-.->|3. Direct P2P Media<br/>if possible| B
-    A <-.->|4. Relay via TURN<br/>if NAT traversal fails| TURN
-    TURN <-.-> B
+    CAM -->|Video Frames| BRIDGE
+    BRIDGE -->|Video Stream| SFU
+    BRIDGE <-->|WebSocket| WORKER
+    WORKER <--> KV
     
-    style A fill:#e1f5ff
-    style B fill:#e1f5ff
-    style SS fill:#fff4e1
-    style STUN fill:#f0fff4
-    style TURN fill:#fff0f0
+    SFU -->|Video Stream| UI
+    UI -->|Commands via DataChannel| SFU
+    SFU -->|Commands| BRIDGE
+    BRIDGE -->|/cmd_vel| ROS
+    JOY --> UI
+    
+    style SFU fill:#f96,stroke:#333
+    style WORKER fill:#9cf,stroke:#333
+    style BRIDGE fill:#9f9,stroke:#333
 ```
+
+## Key Features
+
+- **Cloud-based SFU**: No NAT traversal issues - all media goes through Cloudflare's global edge network
+- **Fleet Management**: Multiple robots can register and be discovered by operators
+- **Low Latency**: Cloudflare's edge network provides sub-100ms latency globally
+- **Scalable**: SFU architecture supports multiple operators viewing the same robot
+- **Secure**: All connections use DTLS/SRTP encryption
+
+## Components
+
+### Robot Side
+
+| File | Description |
+|------|-------------|
+| `bridge_node.py` | Main ROS2 node that orchestrates all components |
+| `sfu_manager.py` | Manages WebRTC connection to Cloudflare Calls SFU |
+| `signaling_client.py` | WebSocket client for Fleet Worker communication |
+| `cloudflare_calls.py` | HTTP client for Cloudflare Calls REST API |
+| `video_source.py` | Captures video from camera and creates WebRTC track |
+| `command_handler.py` | Receives commands and publishes to `/cmd_vel` |
+
+### Cloud Side (in `cloud/workers/fleet-worker/`)
+
+| Component | Description |
+|-----------|-------------|
+| Fleet Worker | Cloudflare Worker with Durable Objects for WebSocket handling |
+| Workers KV | Stores robot registry (online status, SFU session IDs) |
+
+## Connection Flow
+
 ```mermaid
 sequenceDiagram
-    participant A as Peer A<br/>(192.168.1.100)
-    participant NAT_A as NAT A
-    participant STUN as STUN Server
-    participant NAT_B as NAT B
-    participant B as Peer B<br/>(10.0.0.50)
-    
-    Note over A,B: Step 1: Discover Public Endpoints
-    A->>NAT_A: Send to STUN
-    NAT_A->>STUN: From 203.0.113.10:54321
-    STUN->>NAT_A: You are 203.0.113.10:54321
-    NAT_A->>A: Your public endpoint
-    
-    B->>NAT_B: Send to STUN
-    NAT_B->>STUN: From 198.51.100.20:12345
-    STUN->>NAT_B: You are 198.51.100.20:12345
-    NAT_B->>B: Your public endpoint
-    
-    Note over A,B: Step 2: Exchange via Signaling
-    Note over A: Now knows B is at<br/>198.51.100.20:12345
-    Note over B: Now knows A is at<br/>203.0.113.10:54321
-    
-    Note over A,B: Step 3: Simultaneous Open (The Magic!)
-    A->>NAT_A: Send to 198.51.100.20:12345
-    Note over NAT_A: Opens hole for<br/>198.51.100.20:12345
-    NAT_A->>NAT_B: Packet arrives
-    
-    B->>NAT_B: Send to 203.0.113.10:54321
-    Note over NAT_B: Opens hole for<br/>203.0.113.10:54321
-    NAT_B->>NAT_A: Packet arrives
-    
-    Note over A,B: ✅ Bidirectional P2P established!
-    A<<->>B: Direct communication
+    participant R as Robot
+    participant W as Fleet Worker
+    participant S as Cloudflare SFU
+    participant O as Operator
+
+    Note over R,W: 1. Robot Startup
+    R->>S: POST /sessions/new
+    S-->>R: sessionId
+    R->>S: POST /tracks/new (video)
+    R->>S: WebRTC: Video stream
+    R->>W: WebSocket connect
+    R->>W: {"type":"status", "sfuSessionId":"...", "videoTrackName":"..."}
+    W->>W: Store in KV
+
+    Note over O,W: 2. Operator Discovery
+    O->>W: GET /robots
+    W-->>O: [{id:"robot1", sfuSessionId:"...", videoTrackName:"..."}]
+
+    Note over O,S: 3. Operator Connects
+    O->>S: POST /sessions/new
+    S-->>O: sessionId
+    O->>S: POST /tracks/new (pull robot video)
+    S-->>O: WebRTC: Video stream
+    O->>S: POST /datachannels/new (cmd_vel, local)
+    S-->>O: {id: 2}
+    O->>O: createDataChannel("cmd_vel", {negotiated:true, id:2})
+
+    Note over O,R: 4. Command Channel Setup
+    O->>W: POST /connect {robotId, operatorSessionId}
+    W->>R: WS: {"action":"subscribe_cmd", "sessionId":"...", "channel":"cmd_vel"}
+    R->>S: POST /datachannels/new (cmd_vel, remote)
+    S-->>R: {id: 1}
+    R->>R: createDataChannel("cmd_vel_subscribed", {negotiated:true, id:1})
+
+    Note over O,R: 5. Teleoperation Active
+    O->>S: DataChannel: {linear:{x:0.5}, angular:{z:0.1}}
+    S->>R: DataChannel: {linear:{x:0.5}, angular:{z:0.1}}
+    R->>R: Publish to /cmd_vel
 ```
 
-### 2. **Firewall Rules Must Permit**
-```
-┌─────────────────────────────────────────┐
-│ ✅ REQUIRED FIREWALL CONDITIONS:        │
-├─────────────────────────────────────────┤
-│                                         │
-│ 1. Allow OUTBOUND UDP traffic           │
-│    • Port range: 1024-65535 (ephemeral)│
-│    • Destination: Any                   │
-│                                         │
-│ 2. Allow INBOUND UDP on same ports      │
-│    • From: Specific IP learned via STUN│
-│    • NAT must maintain port mapping     │
-│                                         │
-│ 3. UDP timeout >= 30 seconds            │
-│    • Connection must stay "open"        │
-│    • Keepalives prevent timeout         │
-│                                         │
-└─────────────────────────────────────────┘
-```
+## Configuration
 
-### 3. **Timing Synchronization**
+Configuration is loaded from `config/bridge_config.yaml`:
 
-The "simultaneous open" must happen within NAT timeout window:
-```
-Time →
-    0s        1s        2s        3s        4s        5s
-    │         │         │         │         │         │
-A:  ●─────────●─────────●─────────●─────────●─────────●
-    Send      Send      Send      (hole open for 30s)
-    
-B:            ●─────────●─────────●─────────●─────────●
-              Send      Send      (hole open for 30s)
-    
-        ┌─────┴─────┐
-        │   Both    │
-        │ NATs have │   ✅ Success!
-        │holes open │
-        └───────────┘
+```yaml
+robot:
+  id: "robot1"
+  cmd_vel_topic: "/cmd_vel"
+  max_linear_speed: 1.0
+  max_angular_speed: 2.0
+
+video:
+  device: "/dev/video0"
+  width: 640
+  height: 480
+  fps: 30
+
+cloudflare:
+  app_id: "your-cloudflare-app-id"
+  app_token: "your-cloudflare-app-token"  # Or use env var
+
+fleet:
+  worker_url: "wss://fleet-worker.your-domain.workers.dev/ws/robot"
 ```
 
-If timing is off:
-```
-Time →
-    0s        10s       20s       30s
-    │         │         │         │
-A:  ●─────────────────────────────X (NAT closes hole)
-    Send
-    
-B:                                ●
-                                  Send (too late!)
-                                  
-                                  ❌ Blocked by NAT_A
-```
+### Environment Variables
 
-## Why Symmetric NAT Breaks P2P
+Environment variables override config file values:
 
-Here's the problem with Symmetric NAT:
-```
-┌──────────────────────────────────────────────┐
-│ Symmetric NAT Behavior                       │
-├──────────────────────────────────────────────┤
-│                                              │
-│ Internal IP: 192.168.1.100:5000             │
-│                                              │
-│ When talking to STUN (1.2.3.4:3478):        │
-│   → Public mapping: 203.0.113.10:54321      │
-│                                              │
-│ When talking to Peer B (5.6.7.8:9999):      │
-│   → Public mapping: 203.0.113.10:54322      │
-│      (DIFFERENT PORT!)                       │
-│                                              │
-│ Peer B learns 54321 from STUN exchange,     │
-│ but A will use 54322 when contacting B!     │
-│                                              │
-│ ❌ Mismatch = Connection fails               │
-└──────────────────────────────────────────────┘
+| Variable | Description |
+|----------|-------------|
+| `CLOUDFLARE_APP_ID` | Cloudflare Calls Application ID |
+| `CLOUDFLARE_APP_TOKEN` | Cloudflare Calls API Token |
+| `FLEET_WORKER_URL` | Fleet Worker WebSocket URL |
+| `ROBOT_ID` | Unique robot identifier |
+
+## Usage
+
+### Starting the Robot Bridge
+
+```bash
+# Source ROS2 workspace
+source install/setup.bash
+
+# Set credentials (or use config file)
+export CLOUDFLARE_APP_ID="your-app-id"
+export CLOUDFLARE_APP_TOKEN="your-token"
+
+# Launch the bridge
+ros2 launch webrtc_ros2_bridge bridge.launch.py
 ```
 
-Visualization:
-```
-        ┌─────────────────┐
-        │  Symmetric NAT  │
-        │   (Peer A)      │
-        └─────────────────┘
-              ││  ││
-    To STUN   ││  ││  To Peer B
-    :54321    ││  ││  :54322
-              ││  ││
-              ││  ││
-          Different ports!
-          Peer B will send
-          to :54321, but
-          NAT expects :54322
-              ❌ BLOCKED
-```
+### Operator Test Console
 
-## Real-World Conditions Summary
+Open `test_operator.html` in a web browser:
 
-For **direct P2P to work**, you need:
+1. Enter your Cloudflare App Token
+2. Click "Refresh Robots" to see online robots
+3. Select a robot and click "Create SFU Session"
+4. Click "Connect to Robot"
+5. Use the joystick or WASD keys to control the robot
 
-### ✅ Must Have:
-1. **At least ONE peer NOT behind Symmetric NAT**
-2. **Both NATs allow UDP hole punching** (most do)
-3. **Firewalls allow established UDP sessions**
-4. **STUN server accessible** from both peers
-5. **Coordinated "simultaneous open"** via signaling
+## DataChannel Protocol
 
-### 🚫 Deal Breakers:
-1. **Both peers behind Symmetric NAT** → 95% failure rate
-2. **Corporate firewall blocks all UDP** → 100% failure
-3. **Carrier-grade NAT (CGNAT)** → Often needs TURN
-4. **Mobile networks with strict firewalls** → Often needs TURN
+Commands are sent as JSON over the `cmd_vel` DataChannel:
 
-### 📊 Statistics from the Field:
-- **~80-85%** of connections work with just STUN
-- **~10-15%** require TURN relay
-- **~5%** fail completely (strict enterprise networks)
-
-## Practical Example: Your Robot Setup
-
-If your Raspberry Pi is at home and remote viewer is also at home:
-```
-Home Network A              Home Network B
-┌─────────────┐            ┌─────────────┐
-│ Router/NAT  │            │ Router/NAT  │
-│  (typical   │◀═══════════▶│  (typical   │
-│  home ISP)  │   Direct   │  home ISP)  │
-│             │    P2P     │             │
-│  ┌──────┐   │   Works!   │  ┌───────┐  │
-│  │ Pi/  │   │    ✅      │  │Browser│  │
-│  │Robot │   │            │  │       │  │
-│  └──────┘   │            │  └───────┘  │
-└─────────────┘            └─────────────┘
-```
-```mermaid
-sequenceDiagram
-    participant A as Peer A
-    participant TURN as TURN Server<br/>(73.157.62.135:3478)
-    participant B as Peer B
-    
-    Note over A,TURN: Authentication Phase
-    A->>TURN: Allocate Request<br/>(username: ugvuser, credential: ...)
-    TURN->>A: Allocate Success<br/>Your relay: 73.157.62.135:50000
-    
-    B->>TURN: Allocate Request<br/>(username: ugvuser, credential: ...)
-    TURN->>B: Allocate Success<br/>Your relay: 73.157.62.135:50001
-    
-    Note over A,B: Permission Setup
-    A->>TURN: CreatePermission for B's IP
-    B->>TURN: CreatePermission for A's IP
-    
-    Note over A,B: Channel Binding (optional, for efficiency)
-    A->>TURN: ChannelBind 0x4000 → B
-    B->>TURN: ChannelBind 0x4001 → A
-    
-    Note over A,B: Media Relay
-    A->>TURN: Video packet (via channel 0x4000)
-    TURN->>B: Video packet forwarded
-    
-    B->>TURN: Control message (via channel 0x4001)
-    TURN->>A: Control message forwarded
-    
-    Note over A,B: Keepalive (every 15-30s)
-    A->>TURN: Refresh request
-    TURN->>A: Allocation refreshed
+```json
+{
+  "linear": {"x": 0.5, "y": 0.0, "z": 0.0},
+  "angular": {"x": 0.0, "y": 0.0, "z": 0.1}
+}
 ```
 
-## When to Use TURN
-```
-┌─────────────────────────────────────────┐
-│ ALWAYS configure TURN servers, because: │
-├─────────────────────────────────────────┤
-│                                         │
-│ ✅ Provides guaranteed connectivity     │
-│ ✅ Handles worst-case NAT scenarios     │
-│ ✅ Required for ~10-15% of connections  │
-│ ✅ Automatic fallback (transparent)     │
-│                                         │
-│ But expect:                             │
-│ ⚠️  2x bandwidth usage                  │
-│ ⚠️  Higher latency                      │
-│ ⚠️  Server infrastructure costs         │
-│                                         │
-└─────────────────────────────────────────┘
+The robot converts this to a `geometry_msgs/Twist` message and publishes to `/cmd_vel`.
+
+## Why Cloudflare SFU?
+
+Traditional P2P WebRTC requires NAT traversal which fails in many scenarios:
+
+| Scenario | P2P Success | SFU Success |
+|----------|-------------|-------------|
+| Both on home networks | ~85% | 100% |
+| One behind corporate firewall | ~50% | 100% |
+| Both behind symmetric NAT | ~5% | 100% |
+| Mobile networks (CGNAT) | ~60% | 100% |
+
+The SFU approach guarantees connectivity at the cost of routing all media through Cloudflare's edge network (which adds minimal latency due to their global presence).
+
+## Dependencies
+
+### Python
+- `aiortc` - WebRTC implementation for Python
+- `aiohttp` - Async HTTP client
+- `websockets` - WebSocket client
+- `opencv-python` - Video capture
+- `av` - Video encoding
+
+### ROS2
+- `rclpy`
+- `geometry_msgs`
+- `std_msgs`
+
+## Troubleshooting
+
+### Video not showing
+- Check camera permissions: `ls -la /dev/video0`
+- Verify camera works: `ffplay /dev/video0`
+- Check SFU connection logs for errors
+
+### Commands not received
+- Verify DataChannel shows "open" state on both sides
+- Check that negotiated IDs match (logged on both sides)
+- Ensure Fleet Worker signaling completed
+
+### Robot not appearing in list
+- Check WebSocket connection to Fleet Worker
+- Verify KV entry exists (use Wrangler dashboard)
+- Check robot is sending status with `sfuSessionId`
+
+## References
+
+- [Cloudflare Calls Documentation](https://developers.cloudflare.com/calls/)
+- [Cloudflare Calls API Spec](https://developers.cloudflare.com/calls/static/calls-api-2024-05-21.yaml)
+- [DataChannel Example](https://github.com/cloudflare/realtime-examples/blob/main/echo-datachannels/index.html)
+- [Fleet Management Implementation Plan](../../../FLEET_MANAGEMENT_IMPLEMENTATION_PLAN.md)
