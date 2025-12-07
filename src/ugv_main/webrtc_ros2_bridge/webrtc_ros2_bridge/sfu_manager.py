@@ -30,7 +30,10 @@ class SFUManager:
         self._video_track_name = None
 
     async def connect(self):
-        """Establish WebRTC connection to SFU and publish video track."""
+        """Establish WebRTC connection to SFU and publish video track.
+        
+        Also sets up SCTP transport for DataChannels by creating a dummy channel.
+        """
         if not AIORTC_AVAILABLE:
             self.logger.error("aiortc not available")
             return False
@@ -65,7 +68,12 @@ class SFUManager:
                 transceivers.append(transceiver)
                 self.logger.info("Added video track to peer connection")
 
-            # Create and set local offer
+            # Create a DataChannel to establish SCTP transport in the SDP
+            # This ensures we can subscribe to remote DataChannels later
+            self._sctp_channel = self.pc.createDataChannel("robot-events", negotiated=False)
+            self.logger.info("Added robot-events DataChannel for SCTP transport")
+
+            # Create and set local offer (now includes video + datachannel)
             offer = await self.pc.createOffer()
             await self.pc.setLocalDescription(offer)
             self.logger.info("Created local SDP offer")
@@ -92,7 +100,7 @@ class SFUManager:
                 answer_sdp = response['sessionDescription']['sdp']
                 answer = RTCSessionDescription(sdp=answer_sdp, type='answer')
                 await self.pc.setRemoteDescription(answer)
-                self.logger.info("SFU Connection Established")
+                self.logger.info("SFU Connection Established (with SCTP transport)")
                 return True
             else:
                 self.logger.error("No session description in SFU response")
@@ -105,10 +113,11 @@ class SFUManager:
     async def subscribe_to_datachannel(self, remote_session_id, channel_name):
         """Subscribe to a remote DataChannel (e.g., cmd_vel from operator).
         
-        Based on: https://github.com/cloudflare/realtime-examples/blob/main/echo-datachannels/index.html
+        IMPORTANT: This assumes SCTP transport was already established during connect().
+        We only call /datachannels/new to subscribe - NO renegotiation needed.
         
         DataChannels in Cloudflare SFU are unidirectional:
-        - Operator creates a "local" datachannel and publishes to it
+        - Operator creates a "local" datachannel and sends to it
         - Robot subscribes to it as "remote" and receives data
         
         Args:
@@ -122,56 +131,8 @@ class SFUManager:
         try:
             self.logger.info(f"Subscribing to DataChannel '{channel_name}' from session {remote_session_id}")
             
-            # Step 1: Create a local datachannel to trigger SCTP transport in the offer
-            # Use a high negotiated ID that won't conflict with SFU-assigned IDs
-            dummy_dc = self.pc.createDataChannel("sctp-transport", negotiated=True, id=1000)
-            self.logger.info("Created dummy datachannel to establish SCTP transport")
-            
-            # Step 2: Create offer with the datachannel
-            offer = await self.pc.createOffer()
-            await self.pc.setLocalDescription(offer)
-            self.logger.info("Created offer for datachannel subscription")
-            
-            # Step 3: Use /datachannels/establish to set up SCTP transport with SFU
-            establish_response = await self.calls_client.establish_datachannel(
-                session_id=self.calls_client.session_id,
-                channel_name="server-events",  # Dummy channel name for transport setup
-                location="remote",
-                remote_session_id=remote_session_id,
-                sdp=offer.sdp
-            )
-            
-            self.logger.info(f"DataChannel establish response: {establish_response}")
-            
-            if establish_response.get('errorCode'):
-                self.logger.error(f"DataChannel establish error: {establish_response.get('errorDescription')}")
-                return False
-            
-            # Step 4: Handle renegotiation
-            if establish_response.get('requiresImmediateRenegotiation') and establish_response.get('sessionDescription'):
-                remote_sdp = establish_response['sessionDescription']
-                await self.pc.setRemoteDescription(
-                    RTCSessionDescription(sdp=remote_sdp['sdp'], type=remote_sdp['type'])
-                )
-                self.logger.info(f"Set remote description (type={remote_sdp['type']})")
-                
-                if remote_sdp['type'] == 'offer':
-                    answer = await self.pc.createAnswer()
-                    await self.pc.setLocalDescription(answer)
-                    await self.calls_client.renegotiate(
-                        session_id=self.calls_client.session_id,
-                        sdp=answer.sdp,
-                        sdp_type='answer'
-                    )
-                    self.logger.info("Renegotiation complete")
-            elif establish_response.get('sessionDescription'):
-                remote_sdp = establish_response['sessionDescription']
-                await self.pc.setRemoteDescription(
-                    RTCSessionDescription(sdp=remote_sdp['sdp'], type=remote_sdp['type'])
-                )
-                self.logger.info("Set remote description (no renegotiation needed)")
-            
-            # Step 5: Now subscribe to the actual datachannel using /datachannels/new
+            # Subscribe to the remote datachannel using /datachannels/new
+            # SCTP transport is already established from connect()
             dc_response = await self.calls_client.create_datachannel(
                 session_id=self.calls_client.session_id,
                 channel_name=channel_name,
