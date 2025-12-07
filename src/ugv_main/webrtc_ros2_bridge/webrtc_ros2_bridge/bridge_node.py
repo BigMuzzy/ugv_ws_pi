@@ -245,12 +245,12 @@ class WebRTCBridgeNode(Node):
                 "publish_rate_hz": self.get_parameter("robot.publish_rate_hz").value,
             },
             "fleet": {
-                "worker_url": os.environ.get("FLEET_WORKER_URL", self.get_parameter("fleet.worker_url").value),
-                "robot_id": os.environ.get("ROBOT_ID", self.get_parameter("fleet.robot_id").value),
+                "worker_url": self.get_parameter("fleet.worker_url").value,
+                "robot_id": self.get_parameter("fleet.robot_id").value,
             },
             "cloudflare": {
-                "app_id": os.environ.get("CLOUDFLARE_APP_ID", self.get_parameter("cloudflare.app_id").value),
-                "app_token": os.environ.get("CLOUDFLARE_APP_TOKEN", self.get_parameter("cloudflare.app_token").value),
+                "app_id": self.get_parameter("cloudflare.app_id").value,
+                "app_token": self.get_parameter("cloudflare.app_token").value,
             },
             "webrtc": {
                 "stun_servers": [
@@ -301,6 +301,21 @@ class WebRTCBridgeNode(Node):
                     self.get_logger().info(f"Loaded config from {config_file}")
                 except Exception as e:
                     self.get_logger().warning(f"Failed to load config file: {e}")
+
+        # Environment variables take highest precedence (override everything)
+        env_fleet_url = os.environ.get("FLEET_WORKER_URL")
+        env_robot_id = os.environ.get("ROBOT_ID")
+        env_app_id = os.environ.get("CLOUDFLARE_APP_ID")
+        env_app_token = os.environ.get("CLOUDFLARE_APP_TOKEN")
+        
+        if env_fleet_url:
+            config["fleet"]["worker_url"] = env_fleet_url
+        if env_robot_id:
+            config["fleet"]["robot_id"] = env_robot_id
+        if env_app_id:
+            config["cloudflare"]["app_id"] = env_app_id
+        if env_app_token:
+            config["cloudflare"]["app_token"] = env_app_token
 
         return config
 
