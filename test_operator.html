@@ -236,12 +236,17 @@
             try {
                 log(`Connecting to robot ${selectedRobot.id}...`);
                 
-                // 1. Create offer with our DataChannel and recvonly video
+                // 1. Create a non-negotiated DataChannel FIRST (before offer)
+                // This ensures the SCTP transport is included in the SDP
+                const tempChannel = peerConnection.createDataChannel('cmd_vel_temp', { ordered: true });
+                log('Created temp DataChannel for SCTP transport');
+                
+                // 2. Create offer with DataChannel and recvonly video
                 const offer = await peerConnection.createOffer();
                 await peerConnection.setLocalDescription(offer);
                 log('Created local offer');
                 
-                // 2. Pull robot's video track AND register our session
+                // 3. Pull robot's video track AND register our session
                 log(`Pulling video track: ${selectedRobot.videoTrackName} from session ${selectedRobot.sfuSessionId}`);
                 
                 const pullResp = await fetch(`${CALLS_API_BASE}/${appId}/sessions/${operatorSessionId}/tracks/new`, {
@@ -264,7 +269,7 @@
                     return;
                 }
                 
-                // 3. Set remote description
+                // 4. Set remote description
                 if (pullData.sessionDescription) {
                     await peerConnection.setRemoteDescription(
                         new RTCSessionDescription(pullData.sessionDescription)
@@ -272,7 +277,7 @@
                     log('Set remote description', 'success');
                 }
                 
-                // 4. Handle renegotiation if needed
+                // 5. Handle renegotiation if needed
                 if (pullData.requiresImmediateRenegotiation) {
                     const answer = await peerConnection.createAnswer();
                     await peerConnection.setLocalDescription(answer);
@@ -337,6 +342,11 @@
                 // Create the DataChannel with the SFU-assigned ID (CRITICAL for routing!)
                 if (dcData.dataChannels && dcData.dataChannels[0] && dcData.dataChannels[0].id !== undefined) {
                     const dcId = dcData.dataChannels[0].id;
+                    
+                    // Close the temp channel
+                    tempChannel.close();
+                    
+                    // Create the actual cmd_vel channel with negotiated ID
                     cmdVelChannel = peerConnection.createDataChannel('cmd_vel', {
                         negotiated: true,
                         id: dcId,
@@ -345,14 +355,26 @@
                     cmdVelChannel.onopen = () => log(`cmd_vel channel opened (id=${dcId})`, 'success');
                     cmdVelChannel.onclose = () => log('cmd_vel channel closed');
                     cmdVelChannel.onerror = (e) => log(`cmd_vel error: ${e}`, 'error');
-                    log(`Created negotiated DataChannel cmd_vel with id=${dcId}`);
+                    log(`Created negotiated DataChannel cmd_vel with id=${dcId}, state=${cmdVelChannel.readyState}`);
+                    
+                    // Wait for channel to open
+                    if (cmdVelChannel.readyState !== 'open') {
+                        await new Promise((resolve, reject) => {
+                            const timeout = setTimeout(() => {
+                                log(`DataChannel timeout - state: ${cmdVelChannel.readyState}`, 'warn');
+                                resolve();
+                            }, 3000);
+                            cmdVelChannel.onopen = () => {
+                                clearTimeout(timeout);
+                                log(`cmd_vel channel opened (id=${dcId})`, 'success');
+                                resolve();
+                            };
+                        });
+                    }
                 } else {
                     log('Failed to get DataChannel ID from SFU', 'error');
                     return;
                 }
-                
-                // Small delay for DataChannel to open
-                await new Promise(resolve => setTimeout(resolve, 500));
                 
                 // 7. Signal robot to subscribe to our cmd_vel channel
                 const connectResp = await fetch(`${workerUrl}/connect`, {
