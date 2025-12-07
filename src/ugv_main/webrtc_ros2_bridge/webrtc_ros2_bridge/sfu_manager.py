@@ -65,6 +65,12 @@ class SFUManager:
                 transceivers.append(transceiver)
                 self.logger.info("Added video track to peer connection")
 
+            # Create a dummy DataChannel to establish SCTP transport
+            # This ensures the SDP includes the datachannel transport for later use
+            server_events_dc = self.pc.createDataChannel("server-events", negotiated=False)
+            server_events_dc.on("open", lambda: self.logger.info("server-events DataChannel opened"))
+            self.logger.info("Added server-events DataChannel to establish SCTP transport")
+
             # Create and set local offer
             offer = await self.pc.createOffer()
             await self.pc.setLocalDescription(offer)
@@ -122,60 +128,8 @@ class SFUManager:
         try:
             self.logger.info(f"Subscribing to DataChannel '{channel_name}' from session {remote_session_id}")
             
-            # Create a local datachannel first (needed to trigger SCTP negotiation)
-            # This is a dummy channel to establish the SCTP transport if not already done
-            local_dc = self.pc.createDataChannel("server-events", negotiated=False)
-            
-            # Create offer with the datachannel
-            offer = await self.pc.createOffer()
-            await self.pc.setLocalDescription(offer)
-            self.logger.info("Created offer for datachannel subscription")
-            
-            # Use /datachannels/establish to subscribe to remote datachannel with renegotiation
-            response = await self.calls_client.establish_datachannel(
-                session_id=self.calls_client.session_id,
-                channel_name=channel_name,
-                location="remote",
-                remote_session_id=remote_session_id,
-                sdp=offer.sdp
-            )
-            
-            self.logger.info(f"DataChannel establish response: {response}")
-            
-            if response.get('errorCode'):
-                self.logger.error(f"DataChannel error: {response.get('errorDescription')}")
-                return False
-            
-            # Handle renegotiation
-            if response.get('requiresImmediateRenegotiation') and response.get('sessionDescription'):
-                # Set remote description (SFU's answer/offer)
-                remote_sdp = response['sessionDescription']
-                await self.pc.setRemoteDescription(
-                    RTCSessionDescription(sdp=remote_sdp['sdp'], type=remote_sdp['type'])
-                )
-                self.logger.info("Set remote description from establish response")
-                
-                # Create and send answer if needed
-                if remote_sdp['type'] == 'offer':
-                    answer = await self.pc.createAnswer()
-                    await self.pc.setLocalDescription(answer)
-                    
-                    # Send our answer back
-                    await self.calls_client.renegotiate(
-                        session_id=self.calls_client.session_id,
-                        sdp=answer.sdp,
-                        sdp_type='answer'
-                    )
-                    self.logger.info("Renegotiation complete")
-            elif response.get('sessionDescription'):
-                # Just set the remote description
-                remote_sdp = response['sessionDescription']
-                await self.pc.setRemoteDescription(
-                    RTCSessionDescription(sdp=remote_sdp['sdp'], type=remote_sdp['type'])
-                )
-                self.logger.info("Set remote description (no renegotiation needed)")
-            
-            # Now subscribe to the specific datachannel using /datachannels/new
+            # Subscribe to the remote datachannel using /datachannels/new
+            # The SCTP transport should already be established from our initial connection
             dc_response = await self.calls_client.create_datachannel(
                 session_id=self.calls_client.session_id,
                 channel_name=channel_name,
@@ -208,7 +162,6 @@ class SFUManager:
                     self.logger.info(f"Created negotiated DataChannel '{channel_name}' with id={dc_id}, readyState={channel.readyState}")
                     
                     # Wait for channel to open
-                    import asyncio
                     for _ in range(50):  # 5 seconds total
                         if channel.readyState == "open":
                             self.logger.info(f"DataChannel '{channel_name}' is now open!")

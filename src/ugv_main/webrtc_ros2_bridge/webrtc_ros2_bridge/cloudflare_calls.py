@@ -197,6 +197,7 @@ class CloudflareCallsClient:
             }
         
         self.logger.info(f"Establishing datachannel '{channel_name}' on session {session_id}")
+        self.logger.debug(f"Establish body: {json.dumps(body)[:500]}")  # Log first 500 chars
         
         session = await self._get_http_session()
         async with session.post(url, json=body, headers=self._headers) as resp:
