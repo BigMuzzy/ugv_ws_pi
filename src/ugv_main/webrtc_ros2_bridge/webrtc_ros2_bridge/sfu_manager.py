@@ -70,8 +70,13 @@ class SFUManager:
 
             # Create a DataChannel to establish SCTP transport in the SDP
             # This ensures we can subscribe to remote DataChannels later
-            self._sctp_channel = self.pc.createDataChannel("robot-events", negotiated=False)
-            self.logger.info("Added robot-events DataChannel for SCTP transport")
+            # Use negotiated=True with a high ID to avoid conflicts with SFU-assigned IDs
+            self._sctp_channel = self.pc.createDataChannel(
+                "robot-events", 
+                negotiated=True, 
+                id=999  # High ID to avoid conflicts with SFU-assigned IDs (0, 1, 2, etc.)
+            )
+            self.logger.info("Added robot-events DataChannel for SCTP transport (id=999)")
 
             # Create and set local offer (now includes video + datachannel)
             offer = await self.pc.createOffer()
