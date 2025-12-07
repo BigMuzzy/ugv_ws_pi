@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fleet Operator Console</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            padding: 20px; 
+            background: #1a1a2e; 
+            color: #eee; 
+            margin: 0;
+        }
+        .container { max-width: 1200px; margin: 0 auto; }
+        h1 { color: #00d4ff; text-align: center; }
+        .panel { 
+            background: #16213e; 
+            padding: 20px; 
+            margin: 10px 0; 
+            border-radius: 8px; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        button { 
+            background: #00d4ff; 
+            color: #000; 
+            border: none; 
+            padding: 10px 20px; 
+            margin: 5px; 
+            border-radius: 4px; 
+            cursor: pointer; 
+            font-weight: bold; 
+        }
+        button:hover { background: #00a8cc; }
+        button:disabled { background: #555; color: #888; cursor: not-allowed; }
+        .status { padding: 10px; margin: 10px 0; border-radius: 4px; }
+        .status.success { background: #0f5132; color: #d1e7dd; }
+        .status.error { background: #842029; color: #f8d7da; }
+        .status.info { background: #055160; color: #cff4fc; }
+        #log { 
+            background: #0d1117; 
+            padding: 15px; 
+            border-radius: 4px; 
+            height: 200px; 
+            overflow-y: auto; 
+            font-family: monospace; 
+            font-size: 12px; 
+            line-height: 1.4;
+        }
+        #videoContainer { display: flex; gap: 20px; flex-wrap: wrap; }
+        video { 
+            background: #000; 
+            border-radius: 4px; 
+            max-width: 100%;
+            width: 640px;
+            height: 480px;
+        }
+        .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        #joystick { 
+            width: 150px; 
+            height: 150px; 
+            background: #2a2a4a; 
+            border-radius: 50%; 
+            position: relative; 
+            touch-action: none; 
+            border: 2px solid #00d4ff;
+        }
+        #joystickKnob { 
+            width: 50px; 
+            height: 50px; 
+            background: #00d4ff; 
+            border-radius: 50%; 
+            position: absolute; 
+            top: 50px; 
+            left: 50px; 
+            cursor: grab; 
+            box-shadow: 0 0 10px rgba(0, 212, 255, 0.5);
+        }
+        #joystickKnob:active { cursor: grabbing; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { padding: 10px; text-align: left; border-bottom: 1px solid #333; }
+        th { color: #00d4ff; font-weight: bold; }
+        input[type="text"], input[type="password"] {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            color: #eee;
+            padding: 8px;
+            border-radius: 4px;
+            width: 100%;
+        }
+        input[type="text"]:focus, input[type="password"]:focus {
+            outline: none;
+            border-color: #00d4ff;
+        }
+        .robot-list { display: grid; gap: 10px; }
+        .robot-item { 
+            background: #0d1117; 
+            padding: 15px; 
+            border-radius: 4px; 
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .robot-info { flex: 1; }
+        .robot-name { color: #00d4ff; font-weight: bold; font-size: 16px; }
+        .robot-status { color: #4ade80; font-size: 12px; }
+        .robot-meta { color: #888; font-size: 12px; margin-top: 5px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🤖 Fleet Operator Console</h1>
+        
+        <div class="panel">
+            <h3>⚙️ Configuration</h3>
+            <table>
+                <tr>
+                    <th>Setting</th>
+                    <th>Value</th>
+                </tr>
+                <tr>
+                    <td>Fleet Worker URL</td>
+                    <td><input type="text" id="workerUrl" value="https://fleet-worker.mssemyonov.workers.dev"></td>
+                </tr>
+                <tr>
+                    <td>Cloudflare App ID</td>
+                    <td><input type="text" id="appId" value="f4e541276741873484e4885e3506c43f"></td>
+                </tr>
+                <tr>
+                    <td>Cloudflare App Token</td>
+                    <td><input type="password" id="appToken" placeholder="Enter your Cloudflare Calls token"></td>
+                </tr>
+            </table>
+        </div>
+
+        <div class="panel">
+            <h3>🤖 Available Robots</h3>
+            <div class="controls">
+                <button onclick="fetchRobots()">🔄 Refresh Robot List</button>
+            </div>
+            <div id="robotList" class="robot-list"></div>
+        </div>
+
+        <div class="panel">
+            <h3>📹 Video Stream</h3>
+            <div id="connectionStatus" class="status info">Not connected</div>
+            <div class="controls">
+                <button onclick="connectToRobot()" id="connectBtn">Connect to Selected Robot</button>
+                <button onclick="disconnect()" id="disconnectBtn" disabled>Disconnect</button>
+            </div>
+            <div id="videoContainer">
+                <video id="remoteVideo" autoplay playsinline controls></video>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h3>🎮 Control Panel</h3>
+            <div class="controls">
+                <div>
+                    <h4>Joystick Control</h4>
+                    <div id="joystick">
+                        <div id="joystickKnob"></div>
+                    </div>
+                    <p>Linear: <span id="linearValue">0.0</span> | Angular: <span id="angularValue">0.0</span></p>
+                </div>
+                <div>
+                    <h4>Keyboard Control</h4>
+                    <p>W/↑: Forward | S/↓: Backward</p>
+                    <p>A/←: Turn Left | D/→: Turn Right</p>
+                    <p>Space: Stop</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h3>📋 Debug Log</h3>
+            <button onclick="clearLog()">Clear Log</button>
+            <div id="log"></div>
+        </div>
+    </div>
+
+    <script src="operator.js"></script>
+</body>
+</html>

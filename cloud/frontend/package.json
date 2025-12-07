@@ -1,0 +1,12 @@
+{
+  "name": "fleet-operator-frontend",
+  "version": "1.0.0",
+  "description": "Fleet Operator Frontend for UGV Control",
+  "scripts": {
+    "deploy": "wrangler pages deploy . --project-name=fleet-operator-frontend",
+    "dev": "wrangler pages dev ."
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}
