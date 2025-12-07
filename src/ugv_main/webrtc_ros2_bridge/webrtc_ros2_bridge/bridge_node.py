@@ -230,12 +230,12 @@ class WebRTCBridgeNode(Node):
                 "publish_rate_hz": self.get_parameter("robot.publish_rate_hz").value,
             },
             "fleet": {
-                "worker_url": self.get_parameter("fleet.worker_url").value,
-                "robot_id": self.get_parameter("fleet.robot_id").value,
+                "worker_url": os.environ.get("FLEET_WORKER_URL", self.get_parameter("fleet.worker_url").value),
+                "robot_id": os.environ.get("ROBOT_ID", self.get_parameter("fleet.robot_id").value),
             },
             "cloudflare": {
-                "app_id": self.get_parameter("cloudflare.app_id").value,
-                "app_token": self.get_parameter("cloudflare.app_token").value,
+                "app_id": os.environ.get("CLOUDFLARE_APP_ID", self.get_parameter("cloudflare.app_id").value),
+                "app_token": os.environ.get("CLOUDFLARE_APP_TOKEN", self.get_parameter("cloudflare.app_token").value),
             },
             "webrtc": {
                 "stun_servers": [

@@ -52,5 +52,5 @@ fleet:
   robot_id: "robot1"
 
 cloudflare:
-  app_id: "" # TODO: Enter your Cloudflare Calls App ID
-  app_token: "" # TODO: Enter your Cloudflare Calls App Token
+  app_id: "" # Set via CLOUDFLARE_APP_ID env var
+  app_token: "" # Set via CLOUDFLARE_APP_TOKEN env var
