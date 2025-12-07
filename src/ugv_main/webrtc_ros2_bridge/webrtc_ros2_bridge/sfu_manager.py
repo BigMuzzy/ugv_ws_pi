@@ -105,7 +105,11 @@ class SFUManager:
     async def subscribe_to_datachannel(self, remote_session_id, channel_name):
         """Subscribe to a remote DataChannel (e.g., cmd_vel from operator).
         
-        This triggers SDP renegotiation to establish the DataChannel.
+        Based on: https://github.com/cloudflare/realtime-examples/blob/main/echo-datachannels/index.html
+        
+        DataChannels in Cloudflare SFU are unidirectional:
+        - Operator creates a "local" datachannel and publishes to it
+        - Robot subscribes to it as "remote" and receives data
         
         Args:
             remote_session_id: The operator's SFU session ID
@@ -118,38 +122,110 @@ class SFUManager:
         try:
             self.logger.info(f"Subscribing to DataChannel '{channel_name}' from session {remote_session_id}")
             
-            # Use /datachannels/new to subscribe to remote datachannel
-            response = await self.calls_client.create_datachannel(
+            # Create a local datachannel first (needed to trigger SCTP negotiation)
+            # This is a dummy channel to establish the SCTP transport if not already done
+            local_dc = self.pc.createDataChannel("server-events", negotiated=False)
+            
+            # Create offer with the datachannel
+            offer = await self.pc.createOffer()
+            await self.pc.setLocalDescription(offer)
+            self.logger.info("Created offer for datachannel subscription")
+            
+            # Use /datachannels/establish to subscribe to remote datachannel with renegotiation
+            response = await self.calls_client.establish_datachannel(
+                session_id=self.calls_client.session_id,
+                channel_name=channel_name,
+                location="remote",
+                remote_session_id=remote_session_id,
+                sdp=offer.sdp
+            )
+            
+            self.logger.info(f"DataChannel establish response: {response}")
+            
+            if response.get('errorCode'):
+                self.logger.error(f"DataChannel error: {response.get('errorDescription')}")
+                return False
+            
+            # Handle renegotiation
+            if response.get('requiresImmediateRenegotiation') and response.get('sessionDescription'):
+                # Set remote description (SFU's answer/offer)
+                remote_sdp = response['sessionDescription']
+                await self.pc.setRemoteDescription(
+                    RTCSessionDescription(sdp=remote_sdp['sdp'], type=remote_sdp['type'])
+                )
+                self.logger.info("Set remote description from establish response")
+                
+                # Create and send answer if needed
+                if remote_sdp['type'] == 'offer':
+                    answer = await self.pc.createAnswer()
+                    await self.pc.setLocalDescription(answer)
+                    
+                    # Send our answer back
+                    await self.calls_client.renegotiate(
+                        session_id=self.calls_client.session_id,
+                        sdp=answer.sdp,
+                        sdp_type='answer'
+                    )
+                    self.logger.info("Renegotiation complete")
+            elif response.get('sessionDescription'):
+                # Just set the remote description
+                remote_sdp = response['sessionDescription']
+                await self.pc.setRemoteDescription(
+                    RTCSessionDescription(sdp=remote_sdp['sdp'], type=remote_sdp['type'])
+                )
+                self.logger.info("Set remote description (no renegotiation needed)")
+            
+            # Now subscribe to the specific datachannel using /datachannels/new
+            dc_response = await self.calls_client.create_datachannel(
                 session_id=self.calls_client.session_id,
                 channel_name=channel_name,
                 location="remote",
                 remote_session_id=remote_session_id
             )
             
-            self.logger.info(f"DataChannel subscription response: {response}")
+            self.logger.info(f"DataChannel subscription response: {dc_response}")
             
             # If we got a datachannel ID, create a negotiated datachannel locally
-            if response and 'dataChannels' in response and len(response['dataChannels']) > 0:
-                dc_info = response['dataChannels'][0]
+            if dc_response and 'dataChannels' in dc_response and len(dc_response['dataChannels']) > 0:
+                dc_info = dc_response['dataChannels'][0]
+                
+                if 'errorCode' in dc_info:
+                    self.logger.error(f"DataChannel error: {dc_info.get('errorDescription')}")
+                    return False
+                    
                 dc_id = dc_info.get('id')
                 
                 if dc_id is not None:
-                    # Create a negotiated datachannel with the same ID
+                    # Create a negotiated datachannel with the returned ID
+                    # Use a different local name as in the Cloudflare example
                     channel = self.pc.createDataChannel(
-                        channel_name,
+                        f"{channel_name}_subscribed",
                         negotiated=True,
                         id=dc_id
                     )
                     self.data_channels[channel_name] = channel
                     self._setup_datachannel(channel)
-                    self.logger.info(f"Created negotiated DataChannel '{channel_name}' with id={dc_id}")
+                    self.logger.info(f"Created negotiated DataChannel '{channel_name}' with id={dc_id}, readyState={channel.readyState}")
+                    
+                    # Wait for channel to open
+                    import asyncio
+                    for _ in range(50):  # 5 seconds total
+                        if channel.readyState == "open":
+                            self.logger.info(f"DataChannel '{channel_name}' is now open!")
+                            return True
+                        await asyncio.sleep(0.1)
+                    
+                    self.logger.warning(f"DataChannel '{channel_name}' still in state: {channel.readyState} after 5s")
+                    # Return true anyway - it might open later
                     return True
             
-            self.logger.warning(f"No datachannel ID in response: {response}")
+            self.logger.warning(f"No datachannel ID in response: {dc_response}")
             return False
             
         except Exception as e:
             self.logger.error(f"Failed to subscribe to DataChannel: {e}")
+            import traceback
+            self.logger.error(traceback.format_exc())
             return False
 
     def _setup_datachannel(self, channel):
