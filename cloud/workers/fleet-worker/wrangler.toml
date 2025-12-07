@@ -1,0 +1,17 @@
+name = "fleet-worker"
+main = "src/index.ts"
+compatibility_date = "2024-05-12"
+
+[[kv_namespaces]]
+binding = "ROBOT_REGISTRY"
+id = "7d677d8d580d4979854257b0dcc7d57b" # TODO: Replace with real KV Namespace ID
+preview_id = "24384e85a9a4439cbe5bb3cc528bed69"
+
+[durable_objects]
+bindings = [
+  { name = "FLEET_DO", class_name = "FleetDO" }
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["FleetDO"]

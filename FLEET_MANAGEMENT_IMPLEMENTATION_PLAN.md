@@ -88,7 +88,7 @@ sequenceDiagram
     -   Use `curl` to call `POST /connect` and verify `wscat` receives the signal.
 
 ### Phase 2: Robot Bridge (`webrtc_ros2_bridge`)
-**Goal**: Update C++ bridge to register with Worker and handle remote commands.
+**Goal**: Update Python bridge to register with Worker and handle remote commands.
 **Location**: `src/ugv_main/webrtc_ros2_bridge`
 
 1.  **Dependencies**: 
@@ -110,7 +110,7 @@ sequenceDiagram
     -   Verify node logs indicate "Subscribing to remote DataChannel".
 
 ### Phase 3: Frontend Operator UI (`frontend`)
-**Goal**: Very minimal and simplistic UI to list robots and initiate control. Feature reach UI will be a separate effort.
+**Goal**: Very minimal and simplistic Angular UI to list robots and initiate control. Feature reach UI will be a separate effort.
 **Location**: `cloud/frontend`
 
 1.  **Fleet List Component**:
