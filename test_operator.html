@@ -391,6 +391,12 @@
                     angular: { x: 0, y: 0, z: angular }
                 };
                 cmdVelChannel.send(JSON.stringify(cmd));
+                // Log every 10th command to avoid spam
+                if (Math.random() < 0.1) {
+                    log(`Sent cmd: linear=${linear.toFixed(2)}, angular=${angular.toFixed(2)}`);
+                }
+            } else {
+                log(`Cannot send - channel state: ${cmdVelChannel ? cmdVelChannel.readyState : 'null'}`, 'error');
             }
             document.getElementById('linearSpeed').textContent = linear.toFixed(2);
             document.getElementById('angularSpeed').textContent = angular.toFixed(2);

@@ -237,6 +237,7 @@ class SFUManager:
         @channel.on("message")
         def on_message(message):
             try:
+                self.logger.info(f"DataChannel '{channel_label}' received message: {message[:100] if len(str(message)) > 100 else message}")
                 if self.on_command:
                     # Parse command
                     # Expected format: { "linear": { "x": ... }, "angular": { "z": ... } }
@@ -245,6 +246,7 @@ class SFUManager:
                     data = json.loads(message)
                     linear = data.get("linear", {})
                     angular = data.get("angular", {})
+                    self.logger.info(f"Parsed command: linear.x={linear.get('x', 0)}, angular.z={angular.get('z', 0)}")
                     self.on_command(
                         linear.get("x", 0.0), 
                         linear.get("y", 0.0), 
