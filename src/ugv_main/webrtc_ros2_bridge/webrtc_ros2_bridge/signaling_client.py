@@ -5,14 +5,26 @@ import websockets
 from .cloudflare_calls import CloudflareCallsClient
 
 class SignalingClient:
-    def __init__(self, worker_url, robot_id, calls_client: CloudflareCallsClient, on_subscribe_cmd=None, logger=None):
+    """WebSocket client for connecting to the Fleet Worker signaling server.
+    
+    Responsibilities:
+    - Connect to Fleet Worker via WebSocket
+    - Register robot with SFU session info
+    - Send periodic heartbeats
+    - Handle commands from Worker (e.g., subscribe to operator's DataChannel)
+    """
+    
+    def __init__(self, worker_url, robot_id, calls_client: CloudflareCallsClient, 
+                 on_subscribe_cmd=None, get_video_track_name=None, logger=None):
         self.worker_url = worker_url
         self.robot_id = robot_id
         self.calls_client = calls_client
         self.on_subscribe_cmd = on_subscribe_cmd
+        self.get_video_track_name = get_video_track_name  # Callback to get current video track name
         self.logger = logger or logging.getLogger(__name__)
         self.ws = None
         self.running = False
+        self._reconnect_delay = 5  # seconds
 
     async def start(self):
         self.running = True
@@ -44,13 +56,21 @@ class SignalingClient:
             await self.ws.close()
 
     async def send_status(self):
+        """Send status update to Fleet Worker with SFU session info."""
         if self.ws and self.calls_client.session_id:
             msg = {
                 "type": "status",
                 "robotId": self.robot_id,
                 "sfuSessionId": self.calls_client.session_id
             }
+            # Include video track name if available
+            if self.get_video_track_name:
+                track_name = self.get_video_track_name()
+                if track_name:
+                    msg["videoTrackName"] = track_name
+            
             await self.ws.send(json.dumps(msg))
+            self.logger.debug(f"Sent status: {msg}")
 
     async def _heartbeat_loop(self):
         while self.running:

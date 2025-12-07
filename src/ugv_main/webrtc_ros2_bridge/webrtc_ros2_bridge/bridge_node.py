@@ -93,6 +93,7 @@ class WebRTCBridgeNode(Node):
                 robot_id=fleet_config.get("robot_id", "robot1"),
                 calls_client=self._calls_client,
                 on_subscribe_cmd=self._on_subscribe_cmd,
+                get_video_track_name=self._get_video_track_name,
                 logger=self.get_logger()
             )
 
@@ -341,19 +342,26 @@ class WebRTCBridgeNode(Node):
     async def _on_subscribe_cmd(self, session_id, channel):
         """Handle subscribe command from Fleet Worker."""
         self.get_logger().info(f"Subscribing to remote channel {channel} from session {session_id}")
-        if self._calls_client:
+        if self._sfu_manager:
             try:
-                # Request SFU to bridge the channel
-                # Note: This assumes we have an active WebRTC connection to the SFU
-                # and that creating the datachannel via API is sufficient or triggers negotiation.
-                await self._calls_client.create_datachannel(
-                    session_id=self._calls_client.session_id,
-                    channel_name=channel,
-                    type="remote",
-                    remote_session_id=session_id
+                # Use SFUManager to subscribe to the remote DataChannel
+                # This handles the full SDP renegotiation
+                success = await self._sfu_manager.subscribe_to_datachannel(
+                    remote_session_id=session_id,
+                    channel_name=channel
                 )
+                if success:
+                    self.get_logger().info(f"Successfully subscribed to channel {channel}")
+                else:
+                    self.get_logger().error(f"Failed to subscribe to channel {channel}")
             except Exception as e:
                 self.get_logger().error(f"Failed to subscribe to channel: {e}")
+
+    def _get_video_track_name(self):
+        """Get the video track name from SFU manager for signaling."""
+        if self._sfu_manager:
+            return self._sfu_manager.video_track_name
+        return None
 
     def _on_command(self, linear_x, linear_y, linear_z,
                     angular_x, angular_y, angular_z):
