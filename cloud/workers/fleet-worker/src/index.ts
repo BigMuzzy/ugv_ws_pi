@@ -141,6 +141,7 @@ export class FleetDO {
                             await this.env.ROBOT_REGISTRY.put(`robot:${robotId}`, JSON.stringify({
                                 status: 'online',
                                 sfuSessionId: data.sfuSessionId,
+                                videoTrackName: data.videoTrackName,
                                 lastSeen: Date.now()
                             }), { expirationTtl: 60 });
                         }

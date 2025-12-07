@@ -118,42 +118,35 @@ class SFUManager:
         try:
             self.logger.info(f"Subscribing to DataChannel '{channel_name}' from session {remote_session_id}")
             
-            # Use the establish_datachannel endpoint which handles renegotiation
-            # First, create an offer if we need to renegotiate
-            offer = await self.pc.createOffer()
-            await self.pc.setLocalDescription(offer)
-            
-            response = await self.calls_client.establish_datachannel(
+            # Use /datachannels/new to subscribe to remote datachannel
+            response = await self.calls_client.create_datachannel(
                 session_id=self.calls_client.session_id,
                 channel_name=channel_name,
                 location="remote",
-                remote_session_id=remote_session_id,
-                sdp=offer.sdp
+                remote_session_id=remote_session_id
             )
             
-            # Handle renegotiation if required
-            if response.get('requiresImmediateRenegotiation'):
-                if 'sessionDescription' in response:
-                    # Set remote description (this is an offer from SFU)
-                    remote_sdp = response['sessionDescription']
-                    await self.pc.setRemoteDescription(
-                        RTCSessionDescription(sdp=remote_sdp['sdp'], type=remote_sdp['type'])
-                    )
-                    
-                    # Create and send answer
-                    answer = await self.pc.createAnswer()
-                    await self.pc.setLocalDescription(answer)
-                    
-                    # Send answer back to SFU
-                    await self.calls_client.renegotiate(
-                        session_id=self.calls_client.session_id,
-                        sdp=answer.sdp,
-                        sdp_type="answer"
-                    )
-                    self.logger.info(f"Renegotiation complete for DataChannel '{channel_name}'")
+            self.logger.info(f"DataChannel subscription response: {response}")
             
-            # The datachannel event handler will pick up the new channel
-            return True
+            # If we got a datachannel ID, create a negotiated datachannel locally
+            if response and 'dataChannels' in response and len(response['dataChannels']) > 0:
+                dc_info = response['dataChannels'][0]
+                dc_id = dc_info.get('id')
+                
+                if dc_id is not None:
+                    # Create a negotiated datachannel with the same ID
+                    channel = self.pc.createDataChannel(
+                        channel_name,
+                        negotiated=True,
+                        id=dc_id
+                    )
+                    self.data_channels[channel_name] = channel
+                    self._setup_datachannel(channel)
+                    self.logger.info(f"Created negotiated DataChannel '{channel_name}' with id={dc_id}")
+                    return True
+            
+            self.logger.warning(f"No datachannel ID in response: {response}")
+            return False
             
         except Exception as e:
             self.logger.error(f"Failed to subscribe to DataChannel: {e}")
