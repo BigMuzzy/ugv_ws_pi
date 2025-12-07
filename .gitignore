@@ -28,3 +28,6 @@ core
 *.log
 *.tmp
 src/ugv_else/vizanti
+
+# Node.js
+node_modules/
