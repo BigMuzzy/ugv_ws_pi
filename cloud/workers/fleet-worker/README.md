@@ -169,14 +169,14 @@ sequenceDiagram
     participant DO as Fleet DO
     participant O as Operator
 
-    rect rgb(40, 40, 80)
+    rect rgba(169, 169, 252, 1)
         Note over R,DO: Phase 1: Robot Registration
         R->>SFU: 1. Create session + publish video
         R->>DO: 2. WebSocket connect
         R->>DO: 3. Send status (robotId, sfuSessionId, trackName)
     end
 
-    rect rgb(40, 80, 40)
+    rect rgba(207, 255, 207, 1)
         Note over O,SFU: Phase 2: Operator Setup
         O->>DO: 4. GET /robots
         DO-->>O: 5. Robot list with SFU details
@@ -185,14 +185,14 @@ sequenceDiagram
         O->>SFU: 8. Register cmd_vel channel
     end
 
-    rect rgb(80, 40, 40)
+    rect rgba(255, 214, 214, 1)
         Note over O,R: Phase 3: Signaling
         O->>DO: 9. POST /connect
         DO->>R: 10. WS signal to subscribe
         R->>SFU: 11. Subscribe to cmd_vel
     end
 
-    rect rgb(80, 80, 40)
+    rect rgba(255, 255, 187, 1)
         Note over O,R: Phase 4: Active Session
         O->>SFU: 12. Send commands
         SFU->>R: 13. Forward commands

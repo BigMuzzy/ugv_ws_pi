@@ -14,10 +14,6 @@ Web-based operator console for controlling UGV robots via WebRTC through Cloudfl
 
 ```mermaid
 graph TB
-    subgraph "Operator Side"
-        O1[Operator UI<br/>Browser]
-    end
-    
     subgraph "Cloudflare Edge"
         W[Fleet Worker]
         DO[FleetDO<br/>Durable Object]
@@ -27,27 +23,19 @@ graph TB
     
     subgraph "Robots"
         R1[Robot 1<br/>WebRTC Bridge]
-        R2[Robot 2<br/>WebRTC Bridge]
     end
     
-    %% Robot connections
-    R1 -->|WebSocket<br/>Heartbeat + Signaling| DO
-    R2 -->|WebSocket<br/>Heartbeat + Signaling| DO
+    subgraph "Operators"
+        O1[Operator UI<br/>Browser]
+    end
+    
+    R1 -->|WebSocket| DO
     DO -->|Read/Write| KV
-    
-    %% Operator connections
-    O1 -->|REST API<br/>GET /robots, POST /connect| W
-    O1 -.->|WebSocket<br/>Real-time updates| DO
+    O1 -->|REST API| W
     W -->|Route| DO
-    
-    %% WebRTC media/data
-    R1 <-->|WebRTC<br/>Video + DataChannel| SFU
-    R2 <-->|WebRTC<br/>Video + DataChannel| SFU
-    O1 <-->|WebRTC<br/>Video + DataChannel| SFU
+    R1 <-->|Video/Data| SFU
+    O1 <-->|Video/Data| SFU
 ```
-
-> **Note**: Dashed line (WebSocket for operator) is planned but not yet implemented. 
-> Currently operators use REST polling for robot list updates.
 
 ## Connection Flow
 
@@ -60,21 +48,21 @@ sequenceDiagram
     participant SFU as Cloudflare SFU
     participant R as Robot Bridge
 
-    rect rgba(164, 205, 247, 1)
+    rect rgba(160, 208, 255, 1)
         Note over O,FW: Phase 1: Discovery
         O->>FW: GET /robots
         FW-->>O: [{id, sfuSessionId, videoTrackName, status}]
         Note over O: User selects robot
     end
 
-    rect rgba(130, 232, 181, 1)
+    rect rgba(169, 255, 212, 1)
         Note over O,SFU: Phase 2: Session Creation
         O->>SFU: POST /sessions/new
         SFU-->>O: {sessionId: operatorSessionId}
         Note over O: Create RTCPeerConnection<br/>Add recvonly video transceiver
     end
 
-    rect rgba(244, 199, 154, 1)
+    rect rgba(255, 219, 182, 1)
         Note over O,R: Phase 3: Video Pull & DataChannel Setup
         Note over O: Create temp DataChannel<br/>(ensures SCTP in SDP)
         Note over O: createOffer() + setLocalDescription()
@@ -101,7 +89,7 @@ sequenceDiagram
         FW-->>O: {success: true}
     end
 
-    rect rgba(204, 255, 204, 1)
+    rect rgba(206, 255, 206, 1)
         Note over O,R: Phase 4: Active Session
         
         loop Continuous
@@ -223,22 +211,3 @@ Wait for ICE connection before creating negotiated DataChannels:
 await waitForICE(peerConnection);  // Wait for 'connected' state
 // Then register and create DataChannel
 ```
-
-## Development Workflow
-
-1. **Start Fleet Worker** (Cloudflare Workers)
-   ```bash
-   cd cloud/workers/fleet-worker
-   wrangler dev
-   ```
-
-2. **Start Robot Bridge** (on robot or dev machine)
-   ```bash
-   ros2 launch webrtc_ros2_bridge bridge.launch.py
-   ```
-
-3. **Open Test Console**
-   - Open `test_operator.html` in browser
-   - Enter Cloudflare App Token
-   - Refresh robots list
-   - Select robot → Create Session → Connect
