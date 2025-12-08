@@ -78,10 +78,12 @@ async def test_operator_connection(base_url: str, robot_id: str):
         
         # Test: Send a rosbridge subscribe message
         log("TEST", "\n=== Sending rosbridge subscribe message ===")
+        
+        # Try /rosout which should always exist
         rosbridge_msg = {
             "op": "subscribe",
-            "topic": "/odom",
-            "type": "nav_msgs/msg/Odometry",
+            "topic": "/rosout",
+            "type": "rcl_interfaces/msg/Log",
             "id": "test-sub-1"
         }
         await ws.send(json.dumps(rosbridge_msg))
@@ -124,7 +126,7 @@ async def test_operator_connection(base_url: str, robot_id: str):
         log("TEST", "\n=== Sending rosbridge unsubscribe ===")
         unsub_msg = {
             "op": "unsubscribe",
-            "topic": "/odom",
+            "topic": "/rosout",
             "id": "test-sub-1"
         }
         await ws.send(json.dumps(unsub_msg))

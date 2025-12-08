@@ -141,6 +141,15 @@ class ROSBridgeProxy:
         try:
             # Parse to validate JSON and for logging
             data = json.loads(message)
+            op = data.get("op", "")
+            topic = data.get("topic", data.get("service", ""))
+            
+            # Log all messages at info level for debugging
+            if op == "publish":
+                # Don't spam logs with high-frequency publish messages
+                self.logger.debug(f"rosbridge_server -> Fleet DO: {op} {topic}")
+            else:
+                self.logger.info(f"rosbridge_server -> Fleet DO: {op} {topic}")
             
             # Forward to Fleet DO wrapped in rosbridge type
             if self.send_to_fleet:
@@ -149,12 +158,6 @@ class ROSBridgeProxy:
                     "payload": data
                 }
                 await self.send_to_fleet(wrapped)
-                
-                # Log topic subscriptions (but not every message to avoid spam)
-                op = data.get("op", "")
-                if op in ("subscribe", "unsubscribe", "advertise", "unadvertise",
-                          "call_service", "service_response"):
-                    self.logger.debug(f"Forwarded to Fleet DO: {op} - {data.get('topic', data.get('service', ''))}")
                     
         except json.JSONDecodeError as e:
             self.logger.error(f"Invalid JSON from rosbridge_server: {e}")
@@ -177,6 +180,11 @@ class ROSBridgeProxy:
         if not payload:
             self.logger.warning("Received rosbridge message with empty payload")
             return
+        
+        # Log received message
+        op = payload.get("op", "")
+        topic_or_service = payload.get("topic", payload.get("service", ""))
+        self.logger.info(f"Received from Fleet DO: {op} {topic_or_service}")
             
         if not self.is_connected:
             self.logger.warning("Cannot forward to rosbridge_server - not connected")
@@ -185,11 +193,7 @@ class ROSBridgeProxy:
         try:
             message = json.dumps(payload)
             await self._rosbridge_ws.send(message)
-            
-            # Log for debugging
-            op = payload.get("op", "")
-            topic_or_service = payload.get("topic", payload.get("service", ""))
-            self.logger.debug(f"Forwarded to rosbridge_server: {op} {topic_or_service}")
+            self.logger.info(f"Forwarded to rosbridge_server: {op} {topic_or_service}")
             
         except Exception as e:
             self.logger.error(f"Error forwarding to rosbridge_server: {e}")
