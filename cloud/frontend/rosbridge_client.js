@@ -384,21 +384,23 @@ class FleetROSBridge {
      */
     sendActionGoal(actionName, actionType, goal, callbacks = {}) {
         const goalId = this._generateId('action');
-        
+
         this._actionGoals.set(goalId, {
             feedback: callbacks.feedback,
             result: callbacks.result
         });
-        
-        this._send({
+
+        const actionMsg = {
             op: 'send_action_goal',
             id: goalId,
             action: actionName,
             action_type: actionType,
-            args: goal
-        });
-        
-        console.log(`[ROSBridge] Sent action goal to ${actionName}:`, goal);
+            args: goal,
+            feedback: true  // Enable feedback messages
+        };
+
+        console.log(`[ROSBridge] Sending action goal (id: ${goalId}):`, actionMsg);
+        this._send(actionMsg);
         
         return {
             goalId,
