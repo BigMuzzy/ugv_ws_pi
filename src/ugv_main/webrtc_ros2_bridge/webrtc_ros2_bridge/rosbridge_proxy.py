@@ -59,11 +59,12 @@ class ROSBridgeProxy:
         self._running = False
         self._reconnect_delay = 5
         self._connection_task: Optional[asyncio.Task] = None
+        self._connected = False  # Track connection state explicitly
         
     @property
     def is_connected(self) -> bool:
         """Check if connected to rosbridge_server."""
-        return self._rosbridge_ws is not None and self._rosbridge_ws.open
+        return self._connected and self._rosbridge_ws is not None
     
     async def start(self):
         """Start the proxy - connects to rosbridge_server."""
@@ -108,6 +109,7 @@ class ROSBridgeProxy:
                     ping_timeout=10
                 ) as ws:
                     self._rosbridge_ws = ws
+                    self._connected = True
                     self.logger.info("Connected to rosbridge_server")
                     
                     # Listen for messages from rosbridge_server
@@ -125,6 +127,7 @@ class ROSBridgeProxy:
                 self.logger.error(f"rosbridge_server connection error: {e}")
             finally:
                 self._rosbridge_ws = None
+                self._connected = False
                 
             if self._running:
                 self.logger.info(f"Reconnecting in {self._reconnect_delay}s...")
