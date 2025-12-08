@@ -17,6 +17,7 @@ except ImportError:
 from .command_handler import CommandHandler
 from .cloudflare_calls import CloudflareCallsClient
 from .signaling_client import SignalingClient
+from .rosbridge_proxy import IntegratedSignalingClient
 from .sfu_manager import SFUManager
 from .video_source import VideoSource
 
@@ -94,16 +95,24 @@ class WebRTCBridgeNode(Node):
                 "environment variables or configure in bridge_config.yaml"
             )
 
-        # Initialize Signaling Client (Fleet)
+        # Initialize Signaling Client (Fleet) with ROSBridge proxy
         self._signaling_client = None
         if fleet_config.get("worker_url") and self._calls_client:
+            # Check if rosbridge proxy should be enabled
+            enable_rosbridge_proxy = fleet_config.get("enable_rosbridge_proxy", True)
+            rosbridge_url = fleet_config.get("rosbridge_url", "ws://localhost:9090")
+            
             self.get_logger().info(f"Initializing Fleet signaling client to {fleet_config.get('worker_url')}...")
-            self._signaling_client = SignalingClient(
+            self.get_logger().info(f"ROSBridge proxy: {'enabled' if enable_rosbridge_proxy else 'disabled'}, URL: {rosbridge_url}")
+            
+            self._signaling_client = IntegratedSignalingClient(
                 worker_url=fleet_config.get("worker_url"),
                 robot_id=fleet_config.get("robot_id", "robot1"),
                 calls_client=self._calls_client,
+                rosbridge_url=rosbridge_url,
                 on_subscribe_cmd=self._on_subscribe_cmd,
                 get_video_track_name=self._get_video_track_name,
+                enable_rosbridge_proxy=enable_rosbridge_proxy,
                 logger=self.get_logger()
             )
         elif fleet_config.get("worker_url") and not self._calls_client:
