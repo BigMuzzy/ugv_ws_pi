@@ -65,10 +65,23 @@ interface OperatorConnection {
  */
 type RobotMessageType = 'status' | 'rosbridge';
 
-/** Wrapper for rosbridge messages sent between Fleet DO and robot/operator */
+/**
+ * Wrapper for rosbridge messages sent between Fleet DO and robot/operator.
+ *
+ * IMPORTANT - Message Wrapping Convention:
+ * - Operator → Fleet DO: BOTH wrapped {"type":"rosbridge","payload":{...}} AND raw {...} supported
+ * - Fleet DO → Robot: ALWAYS wrapped {"type":"rosbridge","payload":{...}}
+ * - Robot → Fleet DO: ALWAYS wrapped {"type":"rosbridge","payload":{...}}
+ * - Fleet DO → Operator: ALWAYS unwrapped (raw rosbridge JSON)
+ *
+ * This asymmetry allows:
+ * 1. Operators to receive pure ROSBridge protocol messages (roslibjs compatible)
+ * 2. Fleet DO to distinguish rosbridge messages from control messages (status, subscribe_cmd)
+ * 3. Robot proxy to easily identify rosbridge messages to forward
+ */
 interface RosbridgeProxyMessage {
     type: 'rosbridge';
-    /** Original rosbridge JSON payload */
+    /** Original rosbridge JSON payload - MUST contain 'op' field per ROSBridge protocol */
     payload: unknown;
 }
 
@@ -399,6 +412,11 @@ export class FleetDO {
                 }
                 // Handle rosbridge messages from robot - forward to all connected operators
                 else if (data.type === 'rosbridge' && robotId) {
+                    // Validate payload has required 'op' field per ROSBridge protocol
+                    if (!data.payload || !data.payload.op || typeof data.payload.op !== 'string') {
+                        console.error(`Invalid rosbridge message from robot ${robotId} - missing 'op' field:`, data.payload);
+                        return;
+                    }
                     this.routeRosbridgeToOperators(robotId, data.payload);
                 }
             } catch (err) {
@@ -484,14 +502,29 @@ export class FleetDO {
             try {
                 const messageStr = event.data as string;
                 const parsed = JSON.parse(messageStr);
-                
-                // Check if the message is already wrapped in rosbridge format
+
+                // Validate message structure
                 if (parsed.type === 'rosbridge' && parsed.payload) {
+                    // Wrapped format - validate payload has 'op' field
+                    if (!parsed.payload.op || typeof parsed.payload.op !== 'string') {
+                        console.error(`Invalid rosbridge message from operator - missing 'op' field:`, parsed.payload);
+                        webSocket.send(JSON.stringify({
+                            type: 'error',
+                            message: 'Invalid rosbridge message - missing required "op" field'
+                        }));
+                        return;
+                    }
                     // Already wrapped - extract payload and forward
                     this.routeRosbridgeToRobot(robotId, JSON.stringify(parsed.payload));
-                } else {
-                    // Raw rosbridge JSON - forward as-is
+                } else if (parsed.op && typeof parsed.op === 'string') {
+                    // Raw rosbridge JSON with valid 'op' field - forward as-is
                     this.routeRosbridgeToRobot(robotId, messageStr);
+                } else {
+                    console.error(`Invalid message format from operator - must have 'type: rosbridge' or 'op' field:`, parsed);
+                    webSocket.send(JSON.stringify({
+                        type: 'error',
+                        message: 'Invalid message format - expected rosbridge protocol message'
+                    }));
                 }
             } catch (err) {
                 console.error(`Error processing operator message:`, err);
@@ -521,17 +554,22 @@ export class FleetDO {
 
     /**
      * Routes a rosbridge message from robot to all connected operators for that robot.
-     * 
+     *
+     * UNWRAPS the message before sending to operators.
+     * Input: payload from wrapped message {"type":"rosbridge","payload":{...}}
+     * Output: raw rosbridge JSON {...} (for roslibjs compatibility)
+     *
      * @param robotId - Source robot ID
-     * @param payload - Rosbridge JSON payload to forward
+     * @param payload - Rosbridge JSON payload to forward (already unwrapped from robot's wrapped message)
      */
     private routeRosbridgeToOperators(robotId: string, payload: unknown): void {
         let operatorCount = 0;
-        
+
         for (const [sessionId, conn] of this.connectedOperators) {
             if (conn.robotId === robotId && conn.ws.readyState === WebSocket.OPEN) {
                 try {
-                    // Send raw rosbridge JSON to operator (not wrapped)
+                    // Send raw rosbridge JSON to operator (NOT wrapped)
+                    // This allows operators to use standard roslibjs or similar libraries
                     conn.ws.send(JSON.stringify(payload));
                     operatorCount++;
                 } catch (err) {
@@ -539,7 +577,7 @@ export class FleetDO {
                 }
             }
         }
-        
+
         if (operatorCount > 0) {
             // Only log occasionally to avoid spam
             // console.log(`Routed rosbridge message from robot ${robotId} to ${operatorCount} operator(s)`);
@@ -548,20 +586,27 @@ export class FleetDO {
 
     /**
      * Routes a rosbridge message from operator to target robot.
-     * 
+     *
+     * WRAPS the message before sending to robot.
+     * Input: raw rosbridge JSON string from operator (may be wrapped or unwrapped)
+     * Output: wrapped message {"type":"rosbridge","payload":{...}}
+     *
+     * The robot's rosbridge_proxy.py will extract the payload and forward to rosbridge_server.
+     *
      * @param robotId - Target robot ID
      * @param messageStr - Raw rosbridge JSON string from operator
      */
     private routeRosbridgeToRobot(robotId: string, messageStr: string): void {
         const robotWs = this.connectedRobots.get(robotId);
-        
+
         if (!robotWs || robotWs.readyState !== WebSocket.OPEN) {
             console.warn(`Cannot route to robot ${robotId} - not connected`);
             return;
         }
 
         try {
-            // Wrap in rosbridge proxy message format for robot
+            // ALWAYS wrap in rosbridge proxy message format for robot
+            // Robot expects: {"type":"rosbridge","payload":{...}}
             const wrappedMessage: RosbridgeProxyMessage = {
                 type: 'rosbridge',
                 payload: JSON.parse(messageStr),

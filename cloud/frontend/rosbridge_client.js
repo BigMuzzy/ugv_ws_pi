@@ -135,6 +135,12 @@ class FleetROSBridge {
      * Handle rosbridge protocol message
      */
     _handleRosbridgeMessage(msg) {
+        // Validate required 'op' field per ROSBridge protocol
+        if (!msg.op || typeof msg.op !== 'string') {
+            console.error('[ROSBridge] Invalid message - missing or invalid "op" field:', msg);
+            return;
+        }
+
         const op = msg.op;
         console.log('[ROSBridge] Received:', op, msg.topic || msg.service || msg.id);
 
@@ -160,7 +166,10 @@ class FleetROSBridge {
                 const serviceCallback = this._serviceCallbacks.get(serviceId);
                 if (serviceCallback) {
                     this._serviceCallbacks.delete(serviceId);
-                    serviceCallback(msg.result, msg.values);
+                    // Protocol: result is boolean success, values contains response data
+                    const success = msg.result === true;
+                    const response = msg.values || {};
+                    serviceCallback(success, response);
                 } else {
                     console.warn('[ROSBridge] Received service_response for unknown ID:', serviceId);
                 }

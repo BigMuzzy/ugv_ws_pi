@@ -135,22 +135,28 @@ class ROSBridgeProxy:
                 
     async def _handle_rosbridge_message(self, message: str):
         """Handle a message received from rosbridge_server.
-        
+
         Wraps the message and forwards it to Fleet DO.
         """
         try:
             # Parse to validate JSON and for logging
             data = json.loads(message)
+
+            # Validate required 'op' field per ROSBridge protocol
+            if "op" not in data or not isinstance(data.get("op"), str):
+                self.logger.error(f"Invalid message from rosbridge_server - missing or invalid 'op' field: {data}")
+                return
+
             op = data.get("op", "")
             topic = data.get("topic", data.get("service", ""))
-            
+
             # Log all messages at info level for debugging
             if op == "publish":
                 # Don't spam logs with high-frequency publish messages
                 self.logger.debug(f"rosbridge_server -> Fleet DO: {op} {topic}")
             else:
                 self.logger.info(f"rosbridge_server -> Fleet DO: {op} {topic}")
-            
+
             # Forward to Fleet DO wrapped in rosbridge type
             if self.send_to_fleet:
                 wrapped = {
@@ -158,7 +164,7 @@ class ROSBridgeProxy:
                     "payload": data
                 }
                 await self.send_to_fleet(wrapped)
-                    
+
         except json.JSONDecodeError as e:
             self.logger.error(f"Invalid JSON from rosbridge_server: {e}")
         except Exception as e:
@@ -166,35 +172,40 @@ class ROSBridgeProxy:
             
     async def handle_fleet_message(self, data: dict):
         """Handle a rosbridge message received from Fleet DO.
-        
+
         Extracts the payload and forwards to rosbridge_server.
-        
+
         Args:
             data: Message dict with type='rosbridge' and payload containing
                   the actual rosbridge JSON message
         """
         if data.get("type") != "rosbridge":
             return
-            
+
         payload = data.get("payload")
         if not payload:
             self.logger.warning("Received rosbridge message with empty payload")
             return
-        
+
+        # Validate required 'op' field per ROSBridge protocol
+        if not isinstance(payload, dict) or "op" not in payload or not isinstance(payload.get("op"), str):
+            self.logger.error(f"Invalid rosbridge message from Fleet DO - missing or invalid 'op' field: {payload}")
+            return
+
         # Log the full payload for debugging
         self.logger.info(f"Received from Fleet DO: {json.dumps(payload)[:200]}")
-            
+
         if not self.is_connected:
             self.logger.warning("Cannot forward to rosbridge_server - not connected")
             return
-            
+
         try:
             message = json.dumps(payload)
             await self._rosbridge_ws.send(message)
             op = payload.get("op", "unknown")
             topic = payload.get("topic", payload.get("service", ""))
             self.logger.info(f"Forwarded to rosbridge_server: {op} {topic}")
-            
+
         except Exception as e:
             self.logger.error(f"Error forwarding to rosbridge_server: {e}")
 
