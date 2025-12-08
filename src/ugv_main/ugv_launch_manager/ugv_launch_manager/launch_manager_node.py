@@ -11,8 +11,6 @@ from ament_index_python.packages import get_package_share_directory
 import os
 import yaml
 import subprocess
-import time
-from pathlib import Path
 
 from .launch_process_manager import LaunchProcessManager
 
@@ -35,15 +33,11 @@ class LaunchManagerNode(Node):
         # Store current mode arguments for cleanup operations
         self.current_mode_arguments = {}
 
-        # Start persistent agent script
-        self.agent_process = None
-        self.start_agent_script()
-
-        # Start ngrok and WebRTC bridge
-        self.ngrok_process = None
+        # Start persistent background processes
         self.webrtc_bridge_process = None
-        self.start_ngrok()
+        self.rosbridge_process = None
         self.start_webrtc_bridge()
+        self.start_rosbridge()
 
         # Load mode configurations
         self.modes = self.load_mode_config()
@@ -112,90 +106,40 @@ class LaunchManagerNode(Node):
             self.process_mgr.set_mode(mode)
             self.get_logger().info(f"Set to {mode} mode (no process)")
 
-    def start_agent_script(self):
-        """Start the persistent agent script that runs throughout the manager's lifetime"""
-        agent_script = Path.home() / '.transitive' / 'start_agent.sh'
-
-        if not agent_script.exists():
-            self.get_logger().warn(
-                f"Agent script not found at {agent_script}. Skipping agent startup."
-            )
-            return
-
-        if not os.access(agent_script, os.X_OK):
-            self.get_logger().warn(
-                f"Agent script at {agent_script} is not executable. Skipping agent startup."
-            )
-            return
-
+    def start_rosbridge(self):
+        """Start ROSBridge WebSocket server in background"""
         try:
-            self.get_logger().info(f"Starting persistent agent script: {agent_script}")
-            self.agent_process = subprocess.Popen(
-                [str(agent_script)],
+            self.get_logger().info("Starting ROSBridge WebSocket server...")
+            self.rosbridge_process = subprocess.Popen(
+                [
+                    'ros2', 'launch', 'rosbridge_server', 'rosbridge_websocket_launch.xml'
+                ],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 start_new_session=True
             )
             self.get_logger().info(
-                f"Agent script started with PID: {self.agent_process.pid}"
+                f"ROSBridge server started with PID: {self.rosbridge_process.pid}"
             )
         except Exception as e:
-            self.get_logger().error(f"Failed to start agent script: {e}")
-            self.agent_process = None
+            self.get_logger().error(f"Failed to start ROSBridge server: {e}")
+            self.rosbridge_process = None
 
-    def stop_agent_script(self):
-        """Stop the persistent agent script"""
-        if self.agent_process:
+    def stop_rosbridge(self):
+        """Stop ROSBridge WebSocket server"""
+        if self.rosbridge_process:
             try:
-                self.get_logger().info("Stopping persistent agent script...")
-                self.agent_process.terminate()
+                self.get_logger().info("Stopping ROSBridge server...")
+                self.rosbridge_process.terminate()
                 try:
-                    self.agent_process.wait(timeout=5)
-                    self.get_logger().info("Agent script terminated cleanly")
+                    self.rosbridge_process.wait(timeout=5)
+                    self.get_logger().info("ROSBridge server terminated cleanly")
                 except subprocess.TimeoutExpired:
-                    self.get_logger().warn("Agent script did not terminate, killing...")
-                    self.agent_process.kill()
-                    self.agent_process.wait()
+                    self.get_logger().warn("ROSBridge server did not terminate, killing...")
+                    self.rosbridge_process.kill()
+                    self.rosbridge_process.wait()
             except Exception as e:
-                self.get_logger().error(f"Error stopping agent script: {e}")
-
-    def start_ngrok(self):
-        """Start ngrok tunnel on port 8080"""
-        try:
-            self.get_logger().info("Starting ngrok tunnel on port 8080...")
-            self.ngrok_process = subprocess.Popen(
-                ['ngrok', 'http', '8080'],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                start_new_session=True
-            )
-            self.get_logger().info(
-                f"ngrok started with PID: {self.ngrok_process.pid}"
-            )
-            # Wait a bit for ngrok to initialize
-            time.sleep(2)
-        except FileNotFoundError:
-            self.get_logger().error("ngrok not found. Please install ngrok.")
-            self.ngrok_process = None
-        except Exception as e:
-            self.get_logger().error(f"Failed to start ngrok: {e}")
-            self.ngrok_process = None
-
-    def stop_ngrok(self):
-        """Stop ngrok tunnel"""
-        if self.ngrok_process:
-            try:
-                self.get_logger().info("Stopping ngrok tunnel...")
-                self.ngrok_process.terminate()
-                try:
-                    self.ngrok_process.wait(timeout=5)
-                    self.get_logger().info("ngrok terminated cleanly")
-                except subprocess.TimeoutExpired:
-                    self.get_logger().warn("ngrok did not terminate, killing...")
-                    self.ngrok_process.kill()
-                    self.ngrok_process.wait()
-            except Exception as e:
-                self.get_logger().error(f"Error stopping ngrok: {e}")
+                self.get_logger().error(f"Error stopping ROSBridge server: {e}")
 
     def start_webrtc_bridge(self):
         """Start WebRTC ROS2 bridge in background"""
@@ -203,8 +147,7 @@ class LaunchManagerNode(Node):
             self.get_logger().info("Starting WebRTC ROS2 bridge...")
             self.webrtc_bridge_process = subprocess.Popen(
                 [
-                    'ros2', 'launch', 'webrtc_ros2_bridge', 'bridge.launch.py',
-                    'host:=0.0.0.0', 'port:=8080'
+                    'ros2', 'launch', 'webrtc_ros2_bridge', 'bridge.launch.py'
                 ],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -404,22 +347,19 @@ class LaunchManagerNode(Node):
     def stop_all_callback(self, request, response):
         """Handle stop all request with selective process stopping"""
         # If no flags are set, stop everything (backwards compatibility)
-        if not (request.stop_mode or request.stop_agent or request.stop_webrtc or request.stop_ngrok):
+        if not (request.stop_mode or request.stop_webrtc or request.stop_rosbridge):
             self.get_logger().info("Stop all requested - no flags set, stopping everything")
             request.stop_mode = True
-            request.stop_agent = True
             request.stop_webrtc = True
-            request.stop_ngrok = True
+            request.stop_rosbridge = True
         else:
             flags = []
             if request.stop_mode:
                 flags.append("mode")
-            if request.stop_agent:
-                flags.append("agent")
             if request.stop_webrtc:
                 flags.append("webrtc")
-            if request.stop_ngrok:
-                flags.append("ngrok")
+            if request.stop_rosbridge:
+                flags.append("rosbridge")
             self.get_logger().info(f"Stop all requested - stopping: {', '.join(flags)}")
 
         errors = []
@@ -439,16 +379,6 @@ class LaunchManagerNode(Node):
             else:
                 self.get_logger().info("No active mode to stop")
 
-        # Stop agent script
-        if request.stop_agent:
-            try:
-                self.stop_agent_script()
-                stopped.append("agent")
-            except Exception as e:
-                error_msg = f"Failed to stop agent: {e}"
-                errors.append(error_msg)
-                self.get_logger().error(error_msg)
-
         # Stop WebRTC bridge
         if request.stop_webrtc:
             try:
@@ -459,13 +389,13 @@ class LaunchManagerNode(Node):
                 errors.append(error_msg)
                 self.get_logger().error(error_msg)
 
-        # Stop ngrok
-        if request.stop_ngrok:
+        # Stop ROSBridge server
+        if request.stop_rosbridge:
             try:
-                self.stop_ngrok()
-                stopped.append("ngrok")
+                self.stop_rosbridge()
+                stopped.append("ROSBridge server")
             except Exception as e:
-                error_msg = f"Failed to stop ngrok: {e}"
+                error_msg = f"Failed to stop ROSBridge server: {e}"
                 errors.append(error_msg)
                 self.get_logger().error(error_msg)
 
@@ -530,12 +460,9 @@ def main(args=None):
             node.get_logger().info("Shutting down active launch process...")
             node.process_mgr.stop_launch()
 
-        # Stop persistent agent script
-        node.stop_agent_script()
-
-        # Stop WebRTC bridge and ngrok
+        # Stop persistent background processes
         node.stop_webrtc_bridge()
-        node.stop_ngrok()
+        node.stop_rosbridge()
 
         node.destroy_node()
         rclpy.shutdown()
