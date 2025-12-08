@@ -4,11 +4,26 @@ Web-based operator console for controlling UGV robots via WebRTC through Cloudfl
 
 ## Current State
 
-`test_operator.html` is a working proof-of-concept that demonstrates:
-- Fetching online robots from fleet worker
-- Establishing WebRTC connection via Cloudflare SFU
-- Pulling video stream from robot
-- Sending joystick/keyboard commands via DataChannel
+The operator console provides two communication channels:
+
+### 1. WebRTC Video & Control (Existing)
+- `operator.js` - WebRTC connection via Cloudflare SFU
+- Video streaming from robot cameras
+- Low-latency cmd_vel via DataChannel
+
+### 2. ROSBridge Proxy (New in Phase 3)
+- `rosbridge_client.js` - roslibjs-like client for Fleet DO
+- `rosbridge_ui.js` - UI controls for ROS operations
+- Full rosbridge protocol support via cloud proxy
+
+## Files
+
+| File | Description |
+|------|-------------|
+| `index.html` | Main operator console page |
+| `operator.js` | WebRTC connection and video/control handling |
+| `rosbridge_client.js` | FleetROSBridge client class (roslibjs-compatible API) |
+| `rosbridge_ui.js` | ROSBridge UI controller and presets |
 
 ## Architecture Overview
 
@@ -23,6 +38,7 @@ graph TB
     
     subgraph "Robots"
         R1[Robot 1<br/>WebRTC Bridge]
+        RB[rosbridge_server<br/>:9090]
     end
     
     subgraph "Operators"
@@ -35,7 +51,45 @@ graph TB
     W -->|Route| DO
     R1 <-->|Video/Data| SFU
     O1 <-->|Video/Data| SFU
+    O1 <-.->|ROSBridge via WS| DO
+    R1 <-->|ROSBridge Proxy| RB
 ```
+
+## ROSBridge Interface Features
+
+### Topic Operations
+- **Subscribe** to any ROS topic with message type
+- **Publish** messages to topics
+- **Throttle rate** control to limit message frequency
+- **Presets** for common topics (/rosout, /odom, /scan, etc.)
+
+### Service Calls
+- Call ROS services with request data
+- View response in JSON format
+- Presets for rosapi services
+
+### Action Clients
+- Send action goals (NavigateToPose, Spin, BackUp, etc.)
+- Receive feedback updates
+- Cancel running actions
+
+### Quick Navigation
+- Send navigation goals with X, Y, Yaw
+- Preset buttons for common movements
+- Cancel navigation button
+
+## Usage
+
+1. Open `index.html` in a browser
+2. Click "Refresh Robot List" to see online robots
+3. Select a robot and click "Connect" (for WebRTC video)
+4. Click "Connect ROSBridge" to enable ROS operations
+5. Use the tabbed interface:
+   - **Subscribe**: Monitor ROS topics
+   - **Publish**: Send messages to topics
+   - **Services**: Call ROS services
+   - **Actions**: Send action goals
+   - **Navigation**: Quick navigation controls
 
 ## Connection Flow
 

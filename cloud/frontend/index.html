@@ -105,6 +105,168 @@
         .robot-name { color: #00d4ff; font-weight: bold; font-size: 16px; }
         .robot-status { color: #4ade80; font-size: 12px; }
         .robot-meta { color: #888; font-size: 12px; margin-top: 5px; }
+        
+        /* ROSBridge UI Styles */
+        .ros-panel { margin-top: 20px; }
+        .ros-section { 
+            background: #0d1117; 
+            padding: 15px; 
+            border-radius: 4px; 
+            margin: 10px 0;
+        }
+        .ros-section h4 { 
+            color: #00d4ff; 
+            margin: 0 0 10px 0; 
+            font-size: 14px;
+        }
+        .ros-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+            align-items: flex-end;
+        }
+        .ros-input-group {
+            flex: 1;
+            min-width: 150px;
+        }
+        .ros-input-group label {
+            display: block;
+            font-size: 11px;
+            color: #888;
+            margin-bottom: 4px;
+        }
+        .ros-input-group input, .ros-input-group select {
+            width: 100%;
+            box-sizing: border-box;
+        }
+        textarea {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            color: #eee;
+            padding: 8px;
+            border-radius: 4px;
+            width: 100%;
+            font-family: monospace;
+            font-size: 12px;
+            resize: vertical;
+        }
+        textarea:focus {
+            outline: none;
+            border-color: #00d4ff;
+        }
+        .btn-small {
+            padding: 5px 10px;
+            font-size: 12px;
+            margin: 2px;
+        }
+        .btn-danger { background: #dc3545; color: white; }
+        .btn-danger:hover { background: #c82333; }
+        .btn-success { background: #28a745; color: white; }
+        .btn-success:hover { background: #218838; }
+        .btn-warning { background: #ffc107; color: #000; }
+        .btn-warning:hover { background: #e0a800; }
+        .btn-secondary { background: #6c757d; color: white; }
+        .btn-secondary:hover { background: #5a6268; }
+        
+        .subscription-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 5px 10px;
+            background: #16213e;
+            border-radius: 4px;
+            margin: 5px 0;
+        }
+        .subscription-topic { color: #4ade80; font-family: monospace; }
+        
+        .topic-message {
+            background: #16213e;
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 4px;
+            border-left: 3px solid #00d4ff;
+        }
+        .topic-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 5px;
+        }
+        .topic-name { color: #00d4ff; font-weight: bold; font-size: 12px; }
+        .topic-time { color: #888; font-size: 11px; }
+        .topic-data {
+            background: #0d1117;
+            padding: 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            overflow-x: auto;
+            max-height: 150px;
+            overflow-y: auto;
+            margin: 0;
+        }
+        
+        #topicMessages {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .preset-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-bottom: 10px;
+        }
+        .preset-btn {
+            padding: 4px 8px;
+            font-size: 11px;
+            background: #2d3748;
+            border: 1px solid #4a5568;
+        }
+        .preset-btn:hover { background: #4a5568; }
+        
+        .tabs {
+            display: flex;
+            border-bottom: 2px solid #30363d;
+            margin-bottom: 15px;
+        }
+        .tab {
+            padding: 10px 20px;
+            cursor: pointer;
+            color: #888;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+            transition: all 0.2s;
+        }
+        .tab:hover { color: #eee; }
+        .tab.active { 
+            color: #00d4ff; 
+            border-bottom-color: #00d4ff;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        
+        .quick-nav {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .quick-nav-btn {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 10px;
+            background: #2d3748;
+            border: 1px solid #4a5568;
+            border-radius: 8px;
+        }
+        .quick-nav-btn:hover { background: #4a5568; }
+        .quick-nav-btn .icon { font-size: 24px; margin-bottom: 5px; }
+        .quick-nav-btn .label { font-size: 11px; }
     </style>
 </head>
 <body>
@@ -177,8 +339,280 @@
             <button onclick="clearLog()">Clear Log</button>
             <div id="log"></div>
         </div>
+
+        <!-- ROSBridge Panel -->
+        <div class="panel ros-panel">
+            <h3>🔌 ROSBridge Interface</h3>
+            <div id="rosbridgeStatus" class="status info">Not connected</div>
+            <div class="controls" style="margin-bottom: 15px;">
+                <button id="rosbridgeConnectBtn" onclick="connectROSBridge()">🔗 Connect ROSBridge</button>
+                <button id="rosbridgeDisconnectBtn" onclick="disconnectROSBridge()" disabled>Disconnect</button>
+            </div>
+            
+            <!-- Tabs -->
+            <div class="tabs">
+                <div class="tab active" onclick="switchTab('subscribe')">📥 Subscribe</div>
+                <div class="tab" onclick="switchTab('publish')">📤 Publish</div>
+                <div class="tab" onclick="switchTab('services')">🔧 Services</div>
+                <div class="tab" onclick="switchTab('actions')">🎯 Actions</div>
+                <div class="tab" onclick="switchTab('nav')">🧭 Navigation</div>
+            </div>
+            
+            <!-- Subscribe Tab -->
+            <div id="tab-subscribe" class="tab-content active">
+                <div class="ros-section">
+                    <h4>Subscribe to Topic</h4>
+                    <div class="preset-buttons">
+                        <button class="preset-btn" onclick="loadSubscriptionPreset('rosout')">/rosout</button>
+                        <button class="preset-btn" onclick="loadSubscriptionPreset('odom')">/odom</button>
+                        <button class="preset-btn" onclick="loadSubscriptionPreset('scan')">/scan</button>
+                        <button class="preset-btn" onclick="loadSubscriptionPreset('tf')">/tf</button>
+                        <button class="preset-btn" onclick="loadSubscriptionPreset('cmd_vel')">/cmd_vel</button>
+                        <button class="preset-btn" onclick="loadSubscriptionPreset('imu')">/imu</button>
+                        <button class="preset-btn" onclick="loadSubscriptionPreset('amcl_pose')">/amcl_pose</button>
+                    </div>
+                    <div class="ros-row">
+                        <div class="ros-input-group">
+                            <label>Topic Name</label>
+                            <input type="text" id="subTopicName" class="ros-control" placeholder="/rosout" disabled>
+                        </div>
+                        <div class="ros-input-group">
+                            <label>Message Type</label>
+                            <input type="text" id="subMsgType" class="ros-control" placeholder="rcl_interfaces/msg/Log" disabled>
+                        </div>
+                        <div class="ros-input-group" style="flex: 0.5;">
+                            <label>Throttle (ms)</label>
+                            <input type="number" id="subThrottleRate" class="ros-control" value="100" min="0" disabled>
+                        </div>
+                        <div>
+                            <button class="ros-control btn-success" onclick="subscribeTopic()" disabled>Subscribe</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="ros-section">
+                    <h4>Active Subscriptions</h4>
+                    <div id="activeSubscriptions">
+                        <p style="color: #888; margin: 0;">No active subscriptions</p>
+                    </div>
+                </div>
+                
+                <div class="ros-section">
+                    <h4>Received Messages <button class="btn-small btn-secondary" onclick="clearTopicMessages()">Clear</button></h4>
+                    <div id="topicMessages"></div>
+                </div>
+            </div>
+            
+            <!-- Publish Tab -->
+            <div id="tab-publish" class="tab-content">
+                <div class="ros-section">
+                    <h4>Publish to Topic</h4>
+                    <div class="preset-buttons">
+                        <button class="preset-btn" onclick="loadPublishPreset('cmd_vel_fwd')">Forward</button>
+                        <button class="preset-btn" onclick="loadPublishPreset('cmd_vel_stop')">Stop</button>
+                        <button class="preset-btn" onclick="loadPublishPreset('cmd_vel_turn')">Turn</button>
+                        <button class="preset-btn" onclick="loadPublishPreset('initial_pose')">Initial Pose</button>
+                    </div>
+                    <div class="ros-row">
+                        <div class="ros-input-group">
+                            <label>Topic Name</label>
+                            <input type="text" id="pubTopicName" class="ros-control" placeholder="/cmd_vel" disabled>
+                        </div>
+                        <div class="ros-input-group">
+                            <label>Message Type</label>
+                            <input type="text" id="pubMsgType" class="ros-control" placeholder="geometry_msgs/msg/Twist" disabled>
+                        </div>
+                    </div>
+                    <div class="ros-row">
+                        <div class="ros-input-group" style="flex: 1;">
+                            <label>Message Data (JSON)</label>
+                            <textarea id="pubMsgData" class="ros-control" rows="6" placeholder='{"linear": {"x": 0.0, "y": 0.0, "z": 0.0}, "angular": {"x": 0.0, "y": 0.0, "z": 0.0}}' disabled></textarea>
+                        </div>
+                    </div>
+                    <div class="ros-row">
+                        <button class="ros-control btn-success" onclick="publishTopic()" disabled>📤 Publish</button>
+                        <button class="ros-control btn-danger" onclick="emergencyStop()" disabled>🛑 E-STOP</button>
+                    </div>
+                </div>
+                
+                <div class="ros-section">
+                    <h4>Quick Velocity Control</h4>
+                    <div class="ros-row" style="justify-content: center; gap: 5px;">
+                        <div style="display: grid; grid-template-columns: repeat(3, 60px); gap: 5px;">
+                            <div></div>
+                            <button class="ros-control" onclick="publishCmdVel(0.3, 0)" disabled>⬆️</button>
+                            <div></div>
+                            <button class="ros-control" onclick="publishCmdVel(0, 0.5)" disabled>⬅️</button>
+                            <button class="ros-control btn-danger" onclick="publishCmdVel(0, 0)" disabled>⏹️</button>
+                            <button class="ros-control" onclick="publishCmdVel(0, -0.5)" disabled>➡️</button>
+                            <div></div>
+                            <button class="ros-control" onclick="publishCmdVel(-0.3, 0)" disabled>⬇️</button>
+                            <div></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Services Tab -->
+            <div id="tab-services" class="tab-content">
+                <div class="ros-section">
+                    <h4>Call Service</h4>
+                    <div class="preset-buttons">
+                        <button class="preset-btn" onclick="loadServicePreset('get_topics')">Get Topics</button>
+                        <button class="preset-btn" onclick="loadServicePreset('get_nodes')">Get Nodes</button>
+                        <button class="preset-btn" onclick="loadServicePreset('clear_costmaps')">Clear Costmaps</button>
+                    </div>
+                    <div class="ros-row">
+                        <div class="ros-input-group">
+                            <label>Service Name</label>
+                            <input type="text" id="srvName" class="ros-control" placeholder="/rosapi/topics" disabled>
+                        </div>
+                        <div class="ros-input-group">
+                            <label>Service Type</label>
+                            <input type="text" id="srvType" class="ros-control" placeholder="rosapi_msgs/srv/Topics" disabled>
+                        </div>
+                    </div>
+                    <div class="ros-row">
+                        <div class="ros-input-group" style="flex: 1;">
+                            <label>Request Data (JSON)</label>
+                            <textarea id="srvRequest" class="ros-control" rows="3" placeholder="{}" disabled></textarea>
+                        </div>
+                    </div>
+                    <div class="ros-row">
+                        <button class="ros-control btn-success" onclick="callService()" disabled>📞 Call Service</button>
+                    </div>
+                    <div class="ros-row">
+                        <div class="ros-input-group" style="flex: 1;">
+                            <label>Response</label>
+                            <textarea id="srvResponse" rows="5" readonly placeholder="Service response will appear here..."></textarea>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Actions Tab -->
+            <div id="tab-actions" class="tab-content">
+                <div class="ros-section">
+                    <h4>Send Action Goal</h4>
+                    <div class="preset-buttons">
+                        <button class="preset-btn" onclick="loadActionPreset('navigate')">NavigateToPose</button>
+                        <button class="preset-btn" onclick="loadActionPreset('spin')">Spin</button>
+                        <button class="preset-btn" onclick="loadActionPreset('backup')">BackUp</button>
+                        <button class="preset-btn" onclick="loadActionPreset('follow_waypoints')">FollowWaypoints</button>
+                    </div>
+                    <div class="ros-row">
+                        <div class="ros-input-group">
+                            <label>Action Name</label>
+                            <input type="text" id="actionName" class="ros-control" placeholder="/navigate_to_pose" disabled>
+                        </div>
+                        <div class="ros-input-group">
+                            <label>Action Type</label>
+                            <input type="text" id="actionType" class="ros-control" placeholder="nav2_msgs/action/NavigateToPose" disabled>
+                        </div>
+                    </div>
+                    <div class="ros-row">
+                        <div class="ros-input-group" style="flex: 1;">
+                            <label>Goal Data (JSON)</label>
+                            <textarea id="actionGoal" class="ros-control" rows="6" placeholder='{"pose": {"header": {"frame_id": "map"}, "pose": {...}}}' disabled></textarea>
+                        </div>
+                    </div>
+                    <div class="ros-row">
+                        <button class="ros-control btn-success" onclick="sendActionGoal()" disabled>🎯 Send Goal</button>
+                        <button class="ros-control btn-warning" id="cancelActionBtn" onclick="cancelAction()" disabled>❌ Cancel</button>
+                    </div>
+                    <div class="ros-row">
+                        <div class="ros-input-group" style="flex: 1;">
+                            <label>Feedback</label>
+                            <textarea id="actionFeedback" rows="3" readonly placeholder="Action feedback will appear here..."></textarea>
+                        </div>
+                    </div>
+                    <div class="ros-row">
+                        <div class="ros-input-group" style="flex: 1;">
+                            <label>Result</label>
+                            <textarea id="actionResult" rows="3" readonly placeholder="Action result will appear here..."></textarea>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Navigation Tab -->
+            <div id="tab-nav" class="tab-content">
+                <div class="ros-section">
+                    <h4>Quick Navigation Goals</h4>
+                    <div class="ros-row">
+                        <div class="ros-input-group" style="flex: 0.5;">
+                            <label>X (meters)</label>
+                            <input type="number" id="navX" class="ros-control" value="1.0" step="0.1" disabled>
+                        </div>
+                        <div class="ros-input-group" style="flex: 0.5;">
+                            <label>Y (meters)</label>
+                            <input type="number" id="navY" class="ros-control" value="0.0" step="0.1" disabled>
+                        </div>
+                        <div class="ros-input-group" style="flex: 0.5;">
+                            <label>Yaw (radians)</label>
+                            <input type="number" id="navYaw" class="ros-control" value="0.0" step="0.1" disabled>
+                        </div>
+                        <div>
+                            <button class="ros-control btn-success" onclick="sendNavGoal(parseFloat(document.getElementById('navX').value), parseFloat(document.getElementById('navY').value), parseFloat(document.getElementById('navYaw').value))" disabled>🚀 Go!</button>
+                        </div>
+                    </div>
+                    <div class="quick-nav">
+                        <button class="quick-nav-btn ros-control" onclick="sendNavGoal(1, 0, 0)" disabled>
+                            <span class="icon">➡️</span>
+                            <span class="label">1m Forward</span>
+                        </button>
+                        <button class="quick-nav-btn ros-control" onclick="sendNavGoal(-1, 0, 3.14)" disabled>
+                            <span class="icon">⬅️</span>
+                            <span class="label">1m Back</span>
+                        </button>
+                        <button class="quick-nav-btn ros-control" onclick="sendNavGoal(0, 1, 1.57)" disabled>
+                            <span class="icon">⬆️</span>
+                            <span class="label">1m Left</span>
+                        </button>
+                        <button class="quick-nav-btn ros-control" onclick="sendNavGoal(0, -1, -1.57)" disabled>
+                            <span class="icon">⬇️</span>
+                            <span class="label">1m Right</span>
+                        </button>
+                        <button class="quick-nav-btn ros-control" onclick="sendNavGoal(0, 0, 0)" disabled>
+                            <span class="icon">🏠</span>
+                            <span class="label">Origin</span>
+                        </button>
+                        <button class="quick-nav-btn ros-control btn-warning" onclick="cancelNavigation()" disabled>
+                            <span class="icon">🛑</span>
+                            <span class="label">Cancel Nav</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- ROS Log -->
+            <div class="ros-section">
+                <h4>ROSBridge Log <button class="btn-small btn-secondary" onclick="clearROSLog()">Clear</button></h4>
+                <div id="rosLog" style="background: #0d1117; padding: 10px; border-radius: 4px; height: 150px; overflow-y: auto; font-family: monospace; font-size: 12px;"></div>
+            </div>
+        </div>
+
     </div>
 
+    <script src="rosbridge_client.js"></script>
+    <script src="rosbridge_ui.js"></script>
     <script src="operator.js"></script>
+    <script>
+        // Tab switching
+        function switchTab(tabName) {
+            // Hide all tab contents
+            document.querySelectorAll('.tab-content').forEach(el => {
+                el.classList.remove('active');
+            });
+            // Deactivate all tabs
+            document.querySelectorAll('.tab').forEach(el => {
+                el.classList.remove('active');
+            });
+            // Show selected tab content
+            document.getElementById(`tab-${tabName}`).classList.add('active');
+            // Activate selected tab
+            event.target.classList.add('active');
+        }
+    </script>
 </body>
 </html>
