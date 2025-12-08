@@ -51,6 +51,11 @@ function disconnectROSBridge() {
     }
     updateROSBridgeStatus('Disconnected', 'info');
     updateSubscriptionsList();
+    
+    // Re-enable connect button, disable disconnect
+    document.getElementById('rosbridgeConnectBtn').disabled = false;
+    document.getElementById('rosbridgeDisconnectBtn').disabled = true;
+    enableROSControls(false);
 }
 
 function onROSBridgeConnected() {
