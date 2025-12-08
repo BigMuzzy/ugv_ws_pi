@@ -55,12 +55,14 @@ Stateful singleton that maintains WebSocket connections to all robots and handle
 
 **State:**
 - `connectedRobots: Map<string, WebSocket>` - Active WebSocket connections to robots
+- `connectedOperators: Map<string, OperatorConnection>` - Active WebSocket connections from operators
 
 **Endpoints:**
 
 | Method | Path | Description |
 |--------|------|-------------|
 | WS | `/ws/robot` | WebSocket endpoint for robot connections |
+| WS | `/ws/operator?robotId=xxx` | WebSocket endpoint for operator rosbridge proxy |
 | GET | `/robots` | List all registered robots |
 | POST | `/connect` | Signal robot to subscribe to operator's DataChannel |
 
@@ -225,6 +227,66 @@ Robot connection endpoint. Robots maintain a persistent WebSocket to receive sig
   "action": "subscribe_cmd",
   "sessionId": "operator-sfu-session-id",
   "channel": "cmd_vel"
+}
+```
+
+**Worker → Robot Messages (rosbridge proxy):**
+
+```json
+{
+  "type": "rosbridge",
+  "payload": { /* rosbridge JSON message from operator */ }
+}
+```
+
+### WebSocket: `/ws/operator?robotId=xxx`
+
+Operator connection endpoint for rosbridge message proxying. Operators connect here to send/receive rosbridge protocol messages to/from a specific robot.
+
+**Query Parameters:**
+- `robotId` (required): Target robot ID to proxy messages to
+
+**Worker → Operator Messages (on connect):**
+
+```json
+{
+  "type": "connected",
+  "operatorSessionId": "op-1234567890-abc123xyz",
+  "robotId": "robot-abc123",
+  "robotConnected": true
+}
+```
+
+**Worker → Operator Messages (robot disconnect):**
+
+```json
+{
+  "type": "robot_disconnected",
+  "robotId": "robot-abc123"
+}
+```
+
+**Operator → Worker Messages:**
+
+Any valid rosbridge JSON message (subscribe, advertise, publish, call_service, etc.):
+
+```json
+{
+  "op": "subscribe",
+  "topic": "/odom",
+  "type": "nav_msgs/Odometry"
+}
+```
+
+**Worker → Operator Messages (rosbridge response):**
+
+Raw rosbridge JSON responses from the robot's rosbridge_server:
+
+```json
+{
+  "op": "publish",
+  "topic": "/odom",
+  "msg": { /* Odometry message */ }
 }
 ```
 

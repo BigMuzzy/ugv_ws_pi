@@ -5,9 +5,10 @@
  * - Robot registration and heartbeat tracking
  * - WebSocket connections for real-time signaling
  * - Operator-to-robot connection orchestration
+ * - Rosbridge message proxying between operators and robots
  */
 
-import { KVNamespace, DurableObjectNamespace, DurableObjectState, WebSocket } from '@cloudflare/workers-types';
+import { KVNamespace, DurableObjectNamespace, DurableObjectState } from '@cloudflare/workers-types';
 
 // =============================================================================
 // Types & Interfaces
@@ -48,6 +49,31 @@ interface ConnectRequest {
     robotId: string;
     operatorSessionId: string;
 }
+
+/** Operator connection info */
+interface OperatorConnection {
+    ws: WebSocket;
+    robotId: string;
+    connectedAt: number;
+}
+
+/**
+ * Message types for robot-operator communication.
+ * - 'status': Robot registration/heartbeat (existing)
+ * - 'subscribe_cmd': DataChannel subscription signal (existing)
+ * - 'rosbridge': Proxied rosbridge JSON messages (new)
+ */
+type RobotMessageType = 'status' | 'rosbridge';
+
+/** Wrapper for rosbridge messages sent between Fleet DO and robot/operator */
+interface RosbridgeProxyMessage {
+    type: 'rosbridge';
+    /** Original rosbridge JSON payload */
+    payload: unknown;
+}
+
+/** Union type for messages from robot */
+type RobotMessage = RobotStatusMessage | RosbridgeProxyMessage;
 
 // =============================================================================
 // Constants
@@ -124,10 +150,18 @@ export class FleetDO {
      */
     private readonly connectedRobots: Map<string, WebSocket>;
 
+    /**
+     * In-memory map of connected operators.
+     * Key: unique operator session ID, Value: OperatorConnection
+     * Enables bidirectional rosbridge message routing.
+     */
+    private readonly connectedOperators: Map<string, OperatorConnection>;
+
     constructor(state: DurableObjectState, env: Env) {
         this.state = state;
         this.env = env;
         this.connectedRobots = new Map();
+        this.connectedOperators = new Map();
     }
 
     /**
@@ -142,7 +176,23 @@ export class FleetDO {
         // Robots connect here to register and receive signaling messages
         // -----------------------------------------------------------------
         if (url.pathname === '/ws/robot') {
-            return this.handleWebSocketUpgrade(request);
+            return this.handleRobotWebSocketUpgrade(request);
+        }
+
+        // -----------------------------------------------------------------
+        // WebSocket Endpoint: /ws/operator
+        // Operators connect here to proxy rosbridge messages to robots
+        // Query params: ?robotId=xxx (required)
+        // -----------------------------------------------------------------
+        if (url.pathname === '/ws/operator') {
+            const robotId = url.searchParams.get('robotId');
+            if (!robotId) {
+                return new Response(
+                    JSON.stringify({ error: 'Missing robotId query parameter' }),
+                    { status: 400, headers: JSON_HEADERS }
+                );
+            }
+            return this.handleOperatorWebSocketUpgrade(request, robotId);
         }
 
         // -----------------------------------------------------------------
@@ -175,7 +225,7 @@ export class FleetDO {
     /**
      * Upgrades HTTP request to WebSocket for robot connections.
      */
-    private handleWebSocketUpgrade(request: Request): Response {
+    private handleRobotWebSocketUpgrade(request: Request): Response {
         const upgradeHeader = request.headers.get('Upgrade');
         if (upgradeHeader !== 'websocket') {
             return new Response('Expected Upgrade: websocket', { status: 426 });
@@ -183,7 +233,30 @@ export class FleetDO {
 
         // Create WebSocket pair - client goes to caller, server stays here
         const [client, server] = Object.values(new WebSocketPair());
-        this.handleWebSocketSession(server);
+        this.handleRobotWebSocketSession(server);
+
+        return new Response(null, {
+            status: 101,
+            webSocket: client,
+        });
+    }
+
+    /**
+     * Upgrades HTTP request to WebSocket for operator connections.
+     * Operators connect to proxy rosbridge messages to/from a specific robot.
+     * 
+     * @param request - HTTP request to upgrade
+     * @param robotId - Target robot ID from query params
+     */
+    private handleOperatorWebSocketUpgrade(request: Request, robotId: string): Response {
+        const upgradeHeader = request.headers.get('Upgrade');
+        if (upgradeHeader !== 'websocket') {
+            return new Response('Expected Upgrade: websocket', { status: 426 });
+        }
+
+        // Create WebSocket pair - client goes to caller, server stays here
+        const [client, server] = Object.values(new WebSocketPair());
+        this.handleOperatorWebSocketSession(server, robotId);
 
         return new Response(null, {
             status: 101,
@@ -283,11 +356,12 @@ export class FleetDO {
      * 2. We store the WebSocket in connectedRobots map
      * 3. We update KV with robot metadata (TTL for auto-cleanup)
      * 4. Robot sends periodic heartbeats to refresh TTL
-     * 5. On disconnect, we clean up map and KV entries
+     * 5. Robot can send/receive rosbridge messages to/from connected operators
+     * 6. On disconnect, we clean up map and KV entries
      * 
      * @param webSocket - The server-side WebSocket to manage
      */
-    private handleWebSocketSession(webSocket: WebSocket): void {
+    private handleRobotWebSocketSession(webSocket: WebSocket): void {
         webSocket.accept();
 
         // Track robotId for this session (set on first status message)
@@ -323,6 +397,10 @@ export class FleetDO {
 
                     console.log(`Robot ${robotId} registered/heartbeat - session: ${data.sfuSessionId}`);
                 }
+                // Handle rosbridge messages from robot - forward to all connected operators
+                else if (data.type === 'rosbridge' && robotId) {
+                    this.routeRosbridgeToOperators(robotId, data.payload);
+                }
             } catch (err) {
                 console.error('Error processing WebSocket message:', err);
             }
@@ -335,6 +413,9 @@ export class FleetDO {
             if (robotId) {
                 console.log(`Robot ${robotId} disconnected`);
                 this.connectedRobots.delete(robotId);
+
+                // Notify connected operators that robot disconnected
+                this.notifyOperatorsRobotDisconnected(robotId);
 
                 // Remove from KV immediately (don't wait for TTL)
                 try {
@@ -356,6 +437,152 @@ export class FleetDO {
                 // The close event will fire after error and handle cleanup
             }
         });
+    }
+
+    /**
+     * Manages an operator's WebSocket session lifecycle.
+     * 
+     * Session Flow:
+     * 1. Operator connects with robotId query param
+     * 2. We store the WebSocket in connectedOperators map
+     * 3. Operator sends rosbridge JSON messages (subscribe, call_service, etc.)
+     * 4. We forward messages to the target robot
+     * 5. Robot responses are routed back to this operator
+     * 6. On disconnect, we clean up the operator connection
+     * 
+     * @param webSocket - The server-side WebSocket to manage
+     * @param robotId - Target robot ID from query params
+     */
+    private handleOperatorWebSocketSession(webSocket: WebSocket, robotId: string): void {
+        webSocket.accept();
+
+        // Generate unique session ID for this operator connection
+        const operatorSessionId = `op-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+        // Store operator connection
+        const operatorConn: OperatorConnection = {
+            ws: webSocket,
+            robotId,
+            connectedAt: Date.now(),
+        };
+        this.connectedOperators.set(operatorSessionId, operatorConn);
+
+        console.log(`Operator ${operatorSessionId} connected for robot ${robotId}`);
+
+        // Send connection confirmation to operator
+        webSocket.send(JSON.stringify({
+            type: 'connected',
+            operatorSessionId,
+            robotId,
+            robotConnected: this.connectedRobots.has(robotId),
+        }));
+
+        // ---------------------------------------------------------------------
+        // Message Handler
+        // ---------------------------------------------------------------------
+        webSocket.addEventListener('message', async (event) => {
+            try {
+                const messageStr = event.data as string;
+                
+                // All messages from operator are rosbridge JSON - forward to robot
+                this.routeRosbridgeToRobot(robotId, messageStr);
+            } catch (err) {
+                console.error(`Error processing operator message:`, err);
+            }
+        });
+
+        // ---------------------------------------------------------------------
+        // Close Handler
+        // ---------------------------------------------------------------------
+        webSocket.addEventListener('close', () => {
+            console.log(`Operator ${operatorSessionId} disconnected from robot ${robotId}`);
+            this.connectedOperators.delete(operatorSessionId);
+        });
+
+        // ---------------------------------------------------------------------
+        // Error Handler
+        // ---------------------------------------------------------------------
+        webSocket.addEventListener('error', (event) => {
+            console.error(`WebSocket error for operator ${operatorSessionId}:`, event);
+            this.connectedOperators.delete(operatorSessionId);
+        });
+    }
+
+    // =========================================================================
+    // Message Routing
+    // =========================================================================
+
+    /**
+     * Routes a rosbridge message from robot to all connected operators for that robot.
+     * 
+     * @param robotId - Source robot ID
+     * @param payload - Rosbridge JSON payload to forward
+     */
+    private routeRosbridgeToOperators(robotId: string, payload: unknown): void {
+        let operatorCount = 0;
+        
+        for (const [sessionId, conn] of this.connectedOperators) {
+            if (conn.robotId === robotId && conn.ws.readyState === WebSocket.OPEN) {
+                try {
+                    // Send raw rosbridge JSON to operator (not wrapped)
+                    conn.ws.send(JSON.stringify(payload));
+                    operatorCount++;
+                } catch (err) {
+                    console.error(`Error sending to operator ${sessionId}:`, err);
+                }
+            }
+        }
+        
+        if (operatorCount > 0) {
+            // Only log occasionally to avoid spam
+            // console.log(`Routed rosbridge message from robot ${robotId} to ${operatorCount} operator(s)`);
+        }
+    }
+
+    /**
+     * Routes a rosbridge message from operator to target robot.
+     * 
+     * @param robotId - Target robot ID
+     * @param messageStr - Raw rosbridge JSON string from operator
+     */
+    private routeRosbridgeToRobot(robotId: string, messageStr: string): void {
+        const robotWs = this.connectedRobots.get(robotId);
+        
+        if (!robotWs || robotWs.readyState !== WebSocket.OPEN) {
+            console.warn(`Cannot route to robot ${robotId} - not connected`);
+            return;
+        }
+
+        try {
+            // Wrap in rosbridge proxy message format for robot
+            const wrappedMessage: RosbridgeProxyMessage = {
+                type: 'rosbridge',
+                payload: JSON.parse(messageStr),
+            };
+            robotWs.send(JSON.stringify(wrappedMessage));
+        } catch (err) {
+            console.error(`Error routing message to robot ${robotId}:`, err);
+        }
+    }
+
+    /**
+     * Notifies all operators connected to a robot that it has disconnected.
+     * 
+     * @param robotId - Disconnected robot ID
+     */
+    private notifyOperatorsRobotDisconnected(robotId: string): void {
+        for (const [sessionId, conn] of this.connectedOperators) {
+            if (conn.robotId === robotId && conn.ws.readyState === WebSocket.OPEN) {
+                try {
+                    conn.ws.send(JSON.stringify({
+                        type: 'robot_disconnected',
+                        robotId,
+                    }));
+                } catch (err) {
+                    console.error(`Error notifying operator ${sessionId}:`, err);
+                }
+            }
+        }
     }
 
     // =========================================================================
