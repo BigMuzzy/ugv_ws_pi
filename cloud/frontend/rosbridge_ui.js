@@ -24,7 +24,7 @@ function initROSBridge() {
 }
 
 function connectROSBridge() {
-    if (!selectedRobot) {
+    if (!window.selectedRobot) {
         logROS('Please select a robot first', 'error');
         return;
     }
@@ -33,9 +33,9 @@ function connectROSBridge() {
         initROSBridge();
     }
     
-    logROS(`Connecting ROSBridge to ${selectedRobot.id}...`);
+    logROS(`Connecting ROSBridge to ${window.selectedRobot.id}...`);
     updateROSBridgeStatus('Connecting...', 'info');
-    rosBridge.connect(selectedRobot.id);
+    rosBridge.connect(window.selectedRobot.id);
 }
 
 function disconnectROSBridge() {
@@ -55,7 +55,7 @@ function disconnectROSBridge() {
 
 function onROSBridgeConnected() {
     logROS('ROSBridge connected!', 'success');
-    updateROSBridgeStatus(`Connected to ${selectedRobot?.id || 'robot'}`, 'success');
+    updateROSBridgeStatus(`Connected to ${window.selectedRobot?.id || 'robot'}`, 'success');
     document.getElementById('rosbridgeConnectBtn').disabled = true;
     document.getElementById('rosbridgeDisconnectBtn').disabled = false;
     enableROSControls(true);

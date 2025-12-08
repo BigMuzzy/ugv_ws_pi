@@ -2,7 +2,7 @@
 let peerConnection = null;
 let cmdVelChannel = null;
 let operatorSessionId = null;
-let selectedRobot = null;
+// window.selectedRobot is now defined globally in index.html as window.selectedRobot
 
 const CALLS_API_BASE = 'https://rtc.live.cloudflare.com/v1/apps';
 
@@ -48,7 +48,9 @@ async function fetchRobots() {
         }
         
         listEl.innerHTML = robots.map(r => `
-            <div class="robot-item">
+            <div class="robot-item ${window.selectedRobot?.id === r.id ? 'selected' : ''}" 
+                 onclick="selectRobot('${r.id}', '${r.sfuSessionId}', '${r.videoTrackName}')"
+                 data-robot-id="${r.id}">
                 <div class="robot-info">
                     <div class="robot-name">${r.id}</div>
                     <div class="robot-status">● ${r.status}</div>
@@ -58,9 +60,6 @@ async function fetchRobots() {
                         Last seen: ${new Date(r.lastSeen).toLocaleTimeString()}
                     </div>
                 </div>
-                <button onclick="selectAndConnect('${r.id}', '${r.sfuSessionId}', '${r.videoTrackName}')">
-                    Connect
-                </button>
             </div>
         `).join('');
         
@@ -70,15 +69,27 @@ async function fetchRobots() {
     }
 }
 
-function selectAndConnect(robotId, sfuSessionId, videoTrackName) {
-    selectedRobot = { id: robotId, sfuSessionId, videoTrackName };
-    log(`Selected robot: ${selectedRobot.id}`);
-    connectToRobot();
+// Select a robot (without connecting)
+function selectRobot(robotId, sfuSessionId, videoTrackName) {
+    window.selectedRobot = { id: robotId, sfuSessionId, videoTrackName };
+    log(`Selected robot: ${window.selectedRobot.id}`, 'success');
+    
+    // Update UI to show selected state
+    document.querySelectorAll('.robot-item').forEach(el => {
+        el.classList.remove('selected');
+    });
+    const selectedEl = document.querySelector(`[data-robot-id="${robotId}"]`);
+    if (selectedEl) {
+        selectedEl.classList.add('selected');
+    }
+    
+    // Enable connect buttons
+    document.getElementById('connectBtn').disabled = false;
 }
 
 // Connect to selected robot
 async function connectToRobot() {
-    if (!selectedRobot) {
+    if (!window.selectedRobot) {
         log('No robot selected', 'error');
         return;
     }
@@ -93,7 +104,7 @@ async function connectToRobot() {
     const appId = document.getElementById('appId').value;
     
     try {
-        log(`Connecting to robot ${selectedRobot.id}...`);
+        log(`Connecting to robot ${window.selectedRobot.id}...`);
         setStatus('Connecting...', 'info');
         
         // 1. Create SFU session
@@ -120,7 +131,7 @@ async function connectToRobot() {
         peerConnection.oniceconnectionstatechange = () => {
             log(`ICE state: ${peerConnection.iceConnectionState}`);
             if (peerConnection.iceConnectionState === 'connected') {
-                setStatus(`Connected to ${selectedRobot.id}`, 'success');
+                setStatus(`Connected to ${window.selectedRobot.id}`, 'success');
             }
         };
         
@@ -136,7 +147,7 @@ async function connectToRobot() {
         log('Created local offer');
         
         // 5. Pull robot's video track
-        log(`Pulling video track: ${selectedRobot.videoTrackName} from session ${selectedRobot.sfuSessionId}`);
+        log(`Pulling video track: ${window.selectedRobot.videoTrackName} from session ${window.selectedRobot.sfuSessionId}`);
         const pullResp = await fetch(`${CALLS_API_BASE}/${appId}/sessions/${operatorSessionId}/tracks/new`, {
             method: 'POST',
             headers: getHeaders(),
@@ -144,8 +155,8 @@ async function connectToRobot() {
                 sessionDescription: { sdp: offer.sdp, type: 'offer' },
                 tracks: [{
                     location: 'remote',
-                    sessionId: selectedRobot.sfuSessionId,
-                    trackName: selectedRobot.videoTrackName
+                    sessionId: window.selectedRobot.sfuSessionId,
+                    trackName: window.selectedRobot.videoTrackName
                 }]
             })
         });
@@ -222,7 +233,7 @@ async function connectToRobot() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                robotId: selectedRobot.id,
+                robotId: window.selectedRobot.id,
                 operatorSessionId: operatorSessionId
             })
         });
@@ -230,7 +241,7 @@ async function connectToRobot() {
         
         if (connectData.success) {
             log('Connected to robot!', 'success');
-            setStatus(`Connected to ${selectedRobot.id}`, 'success');
+            setStatus(`Connected to ${window.selectedRobot.id}`, 'success');
             document.getElementById('connectBtn').disabled = true;
             document.getElementById('disconnectBtn').disabled = false;
         } else {
@@ -300,7 +311,7 @@ function disconnect() {
     }
     cmdVelChannel = null;
     operatorSessionId = null;
-    selectedRobot = null;
+    window.selectedRobot = null;
     
     document.getElementById('connectBtn').disabled = false;
     document.getElementById('disconnectBtn').disabled = true;

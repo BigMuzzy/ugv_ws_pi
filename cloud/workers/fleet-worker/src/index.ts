@@ -483,9 +483,16 @@ export class FleetDO {
         webSocket.addEventListener('message', async (event) => {
             try {
                 const messageStr = event.data as string;
+                const parsed = JSON.parse(messageStr);
                 
-                // All messages from operator are rosbridge JSON - forward to robot
-                this.routeRosbridgeToRobot(robotId, messageStr);
+                // Check if the message is already wrapped in rosbridge format
+                if (parsed.type === 'rosbridge' && parsed.payload) {
+                    // Already wrapped - extract payload and forward
+                    this.routeRosbridgeToRobot(robotId, JSON.stringify(parsed.payload));
+                } else {
+                    // Raw rosbridge JSON - forward as-is
+                    this.routeRosbridgeToRobot(robotId, messageStr);
+                }
             } catch (err) {
                 console.error(`Error processing operator message:`, err);
             }

@@ -100,6 +100,17 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: 2px solid transparent;
+        }
+        .robot-item:hover { 
+            background: #1a2332; 
+            border-color: #30363d;
+        }
+        .robot-item.selected { 
+            background: #1a3a2e; 
+            border-color: #00d4ff;
         }
         .robot-info { flex: 1; }
         .robot-name { color: #00d4ff; font-weight: bold; font-size: 16px; }
@@ -307,7 +318,7 @@
             <h3>📹 Video Stream</h3>
             <div id="connectionStatus" class="status info">Not connected</div>
             <div class="controls">
-                <button onclick="connectToRobot()" id="connectBtn">Connect to Selected Robot</button>
+                <button onclick="connectToRobot()" id="connectBtn" disabled>Connect to Selected Robot</button>
                 <button onclick="disconnect()" id="disconnectBtn" disabled>Disconnect</button>
             </div>
             <div id="videoContainer">
@@ -594,6 +605,10 @@
 
     </div>
 
+    <script>
+        // Global state shared between modules
+        window.selectedRobot = null;
+    </script>
     <script src="rosbridge_client.js"></script>
     <script src="rosbridge_ui.js"></script>
     <script src="operator.js"></script>

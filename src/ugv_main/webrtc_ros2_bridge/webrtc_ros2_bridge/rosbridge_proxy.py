@@ -181,10 +181,8 @@ class ROSBridgeProxy:
             self.logger.warning("Received rosbridge message with empty payload")
             return
         
-        # Log received message
-        op = payload.get("op", "")
-        topic_or_service = payload.get("topic", payload.get("service", ""))
-        self.logger.info(f"Received from Fleet DO: {op} {topic_or_service}")
+        # Log the full payload for debugging
+        self.logger.info(f"Received from Fleet DO: {json.dumps(payload)[:200]}")
             
         if not self.is_connected:
             self.logger.warning("Cannot forward to rosbridge_server - not connected")
@@ -193,7 +191,9 @@ class ROSBridgeProxy:
         try:
             message = json.dumps(payload)
             await self._rosbridge_ws.send(message)
-            self.logger.info(f"Forwarded to rosbridge_server: {op} {topic_or_service}")
+            op = payload.get("op", "unknown")
+            topic = payload.get("topic", payload.get("service", ""))
+            self.logger.info(f"Forwarded to rosbridge_server: {op} {topic}")
             
         except Exception as e:
             self.logger.error(f"Error forwarding to rosbridge_server: {e}")
