@@ -67,6 +67,14 @@ graph TB
 - Call ROS services with request data
 - View response in JSON format
 - Presets for rosapi services
+- **Launch Manager presets** for mode switching and control:
+  - Get Mode - Query current operational mode
+  - → Idle - Switch to idle/camera-only mode
+  - → Mapping - Switch to SLAM mapping mode
+  - → Navigation - Switch to autonomous navigation mode
+  - Stop Mode - Stop current mode (keep bridges running)
+  - Stop All - Stop all processes (mode, WebRTC, ROSBridge)
+  - Save Map - Save current map to file
 
 ### Action Clients
 - Send action goals (NavigateToPose, Spin, BackUp, etc.)

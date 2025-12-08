@@ -258,6 +258,128 @@ The launch manager logs show:
 - PID information
 - Error messages
 
+## Frontend ROSBridge Interface
+
+### Prepopulated Actions
+
+The following service call configurations can be used in the frontend ROSBridge interface for the launch manager:
+
+#### Get Current Mode Status
+```json
+{
+  "service": "/ugv/get_mode",
+  "type": "ugv_interface/srv/GetMode",
+  "request": {}
+}
+```
+
+#### Switch to Idle Mode
+```json
+{
+  "service": "/ugv/switch_mode",
+  "type": "ugv_interface/srv/SwitchMode",
+  "request": {
+    "mode": "idle"
+  }
+}
+```
+
+#### Switch to Mapping Mode
+```json
+{
+  "service": "/ugv/switch_mode",
+  "type": "ugv_interface/srv/SwitchMode",
+  "request": {
+    "mode": "mapping"
+  }
+}
+```
+
+#### Switch to Navigation Mode
+```json
+{
+  "service": "/ugv/switch_mode",
+  "type": "ugv_interface/srv/SwitchMode",
+  "request": {
+    "mode": "navigation"
+  }
+}
+```
+
+#### Stop All Systems
+```json
+{
+  "service": "/ugv/stop_all",
+  "type": "ugv_interface/srv/StopAll",
+  "request": {
+    "stop_mode": true,
+    "stop_webrtc": true,
+    "stop_rosbridge": true
+  }
+}
+```
+
+#### Stop Only Current Mode
+```json
+{
+  "service": "/ugv/stop_all",
+  "type": "ugv_interface/srv/StopAll",
+  "request": {
+    "stop_mode": true,
+    "stop_webrtc": false,
+    "stop_rosbridge": false
+  }
+}
+```
+
+#### Save Map (During Mapping Mode)
+```json
+{
+  "service": "/ugv/save_map",
+  "type": "ugv_interface/srv/MapSave",
+  "request": {
+    "map_path": "/home/ws/ugv_ws/maps/my_map"
+  }
+}
+```
+
+### Service Response Examples
+
+#### SwitchMode Response
+```json
+{
+  "success": true,
+  "message": "Successfully switched to mapping mode",
+  "previous_mode": "idle",
+  "current_mode": "mapping"
+}
+```
+
+#### GetMode Response
+```json
+{
+  "current_mode": "mapping",
+  "is_active": true,
+  "available_modes": ["idle", "mapping", "navigation"]
+}
+```
+
+#### StopAll Response
+```json
+{
+  "success": true,
+  "message": "Successfully stopped: mode processes, WebRTC bridge, ROSBridge server"
+}
+```
+
+#### MapSave Response
+```json
+{
+  "success": true,
+  "message": "Map saved successfully to /home/ws/ugv_ws/maps/my_map.yaml and /home/ws/ugv_ws/maps/my_map.pgm"
+}
+```
+
 ## History
 
 **2025-11-23:**

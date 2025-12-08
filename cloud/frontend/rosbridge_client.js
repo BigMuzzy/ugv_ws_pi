@@ -26,6 +26,7 @@ class FleetROSBridge {
         // Message handlers by operation ID
         this._messageHandlers = new Map();
         this._topicSubscribers = new Map();  // topic -> Set of callbacks
+        this._topicSubscriptionIds = new Map();  // topic -> subscription id
         this._serviceCallbacks = new Map();  // service call id -> callback
         this._actionGoals = new Map();       // goal id -> { feedback, result }
         
@@ -96,6 +97,7 @@ class FleetROSBridge {
         }
         this.connected = false;
         this._topicSubscribers.clear();
+        this._topicSubscriptionIds.clear();
         this._serviceCallbacks.clear();
         this._actionGoals.clear();
     }
@@ -106,15 +108,23 @@ class FleetROSBridge {
     _handleMessage(data) {
         try {
             const msg = JSON.parse(data);
-            
-            // Handle rosbridge messages forwarded from robot
+
+            // Check if this is a wrapped Fleet DO message or direct rosbridge message
             if (msg.type === 'rosbridge') {
+                // Wrapped format: {type: 'rosbridge', payload: {...}}
                 const rosbridgeMsg = msg.payload;
                 this._handleRosbridgeMessage(rosbridgeMsg);
+            } else if (msg.type === 'connected') {
+                console.log('[ROSBridge] Connection established:', msg.robotId);
             } else if (msg.type === 'robot_status') {
                 console.log('[ROSBridge] Robot status:', msg.payload);
             } else if (msg.type === 'error') {
                 console.error('[ROSBridge] Error from Fleet DO:', msg.payload);
+            } else if (msg.op) {
+                // Direct rosbridge protocol message (not wrapped)
+                this._handleRosbridgeMessage(msg);
+            } else {
+                console.warn('[ROSBridge] Unknown message format:', msg);
             }
         } catch (e) {
             console.error('[ROSBridge] Failed to parse message:', e, data);
@@ -126,7 +136,8 @@ class FleetROSBridge {
      */
     _handleRosbridgeMessage(msg) {
         const op = msg.op;
-        
+        console.log('[ROSBridge] Received:', op, msg.topic || msg.service || msg.id);
+
         switch (op) {
             case 'publish':
                 // Topic message received
@@ -150,6 +161,8 @@ class FleetROSBridge {
                 if (serviceCallback) {
                     this._serviceCallbacks.delete(serviceId);
                     serviceCallback(msg.result, msg.values);
+                } else {
+                    console.warn('[ROSBridge] Received service_response for unknown ID:', serviceId);
                 }
                 break;
                 
@@ -190,12 +203,12 @@ class FleetROSBridge {
             console.error('[ROSBridge] Not connected');
             return false;
         }
-        
+
         const fleetMsg = {
             type: 'rosbridge',
             payload: rosbridgeMsg
         };
-        
+
         this.ws.send(JSON.stringify(fleetMsg));
         return true;
     }
@@ -221,21 +234,26 @@ class FleetROSBridge {
         // Add to local subscribers
         if (!this._topicSubscribers.has(topic)) {
             this._topicSubscribers.set(topic, new Set());
+
+            // Generate and store subscription ID for this topic
+            const subscribeId = this._generateId('subscribe');
+            this._topicSubscriptionIds.set(topic, subscribeId);
+
+            // Send subscribe command to rosbridge
+            const subscribeMsg = {
+                op: 'subscribe',
+                id: subscribeId,
+                topic: topic,
+                type: messageType,
+                ...options
+            };
+
+            this._send(subscribeMsg);
+            console.log(`[ROSBridge] Subscribed to ${topic} (${messageType})`);
         }
+
         this._topicSubscribers.get(topic).add(callback);
-        
-        // Send subscribe command to rosbridge
-        const subscribeMsg = {
-            op: 'subscribe',
-            id: this._generateId('subscribe'),
-            topic: topic,
-            type: messageType,
-            ...options
-        };
-        
-        this._send(subscribeMsg);
-        console.log(`[ROSBridge] Subscribed to ${topic} (${messageType})`);
-        
+
         // Return subscription handle
         return {
             topic,
@@ -250,29 +268,48 @@ class FleetROSBridge {
      */
     unsubscribe(topic, callback = null) {
         const subscribers = this._topicSubscribers.get(topic);
-        if (!subscribers) return;
-        
+        if (!subscribers) {
+            console.warn(`[ROSBridge] Unsubscribe called for unknown topic: ${topic}`);
+            return;
+        }
+
         if (callback) {
             subscribers.delete(callback);
             // If no more subscribers, unsubscribe from rosbridge
             if (subscribers.size === 0) {
                 this._topicSubscribers.delete(topic);
-                this._send({
-                    op: 'unsubscribe',
-                    id: this._generateId('unsubscribe'),
-                    topic: topic
-                });
-                console.log(`[ROSBridge] Unsubscribed from ${topic}`);
+
+                // Use the stored subscription ID for unsubscribe
+                const subscribeId = this._topicSubscriptionIds.get(topic);
+                if (subscribeId) {
+                    console.log(`[ROSBridge] Sending unsubscribe for ${topic} (id: ${subscribeId})`);
+                    this._send({
+                        op: 'unsubscribe',
+                        id: subscribeId,
+                        topic: topic
+                    });
+                    this._topicSubscriptionIds.delete(topic);
+                } else {
+                    console.warn(`[ROSBridge] No subscription ID found for ${topic}`);
+                }
             }
         } else {
             // Unsubscribe all callbacks for this topic
             this._topicSubscribers.delete(topic);
-            this._send({
-                op: 'unsubscribe',
-                id: this._generateId('unsubscribe'),
-                topic: topic
-            });
-            console.log(`[ROSBridge] Unsubscribed all from ${topic}`);
+
+            // Use the stored subscription ID for unsubscribe
+            const subscribeId = this._topicSubscriptionIds.get(topic);
+            if (subscribeId) {
+                console.log(`[ROSBridge] Sending unsubscribe (all) for ${topic} (id: ${subscribeId})`);
+                this._send({
+                    op: 'unsubscribe',
+                    id: subscribeId,
+                    topic: topic
+                });
+                this._topicSubscriptionIds.delete(topic);
+            } else {
+                console.warn(`[ROSBridge] No subscription ID found for ${topic}`);
+            }
         }
     }
     
@@ -332,7 +369,7 @@ class FleetROSBridge {
                 this._serviceCallbacks.delete(callId);
                 callback(false, { error: 'Service call timeout' });
             }
-        }, 30000);  // 30 second timeout
+        }, 10000);  // 10 second timeout
     }
     
     // ========== Action Operations ==========

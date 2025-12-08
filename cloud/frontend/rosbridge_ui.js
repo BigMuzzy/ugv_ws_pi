@@ -459,9 +459,45 @@ function loadServicePreset(preset) {
             service: '/global_costmap/clear_entirely_global_costmap',
             type: 'nav2_msgs/srv/ClearEntireCostmap',
             request: '{}'
+        },
+        // Launch Manager Services
+        'ugv_get_mode': {
+            service: '/ugv/get_mode',
+            type: 'ugv_interface/srv/GetMode',
+            request: '{}'
+        },
+        'ugv_switch_idle': {
+            service: '/ugv/switch_mode',
+            type: 'ugv_interface/srv/SwitchMode',
+            request: '{\n  "mode": "idle"\n}'
+        },
+        'ugv_switch_mapping': {
+            service: '/ugv/switch_mode',
+            type: 'ugv_interface/srv/SwitchMode',
+            request: '{\n  "mode": "mapping"\n}'
+        },
+        'ugv_switch_navigation': {
+            service: '/ugv/switch_mode',
+            type: 'ugv_interface/srv/SwitchMode',
+            request: '{\n  "mode": "navigation"\n}'
+        },
+        'ugv_stop_all': {
+            service: '/ugv/stop_all',
+            type: 'ugv_interface/srv/StopAll',
+            request: '{\n  "stop_mode": true,\n  "stop_webrtc": true,\n  "stop_rosbridge": true\n}'
+        },
+        'ugv_stop_mode_only': {
+            service: '/ugv/stop_all',
+            type: 'ugv_interface/srv/StopAll',
+            request: '{\n  "stop_mode": true,\n  "stop_webrtc": false,\n  "stop_rosbridge": false\n}'
+        },
+        'ugv_save_map': {
+            service: '/ugv/save_map',
+            type: 'ugv_interface/srv/MapSave',
+            request: '{\n  "map_path": "/home/ws/ugv_ws/maps/my_map"\n}'
         }
     };
-    
+
     const p = presets[preset];
     if (p) {
         document.getElementById('srvName').value = p.service;
