@@ -112,14 +112,15 @@ class LaunchManagerNode(Node):
             self.get_logger().info("Starting ROSBridge WebSocket server...")
             self.rosbridge_process = subprocess.Popen(
                 [
-                    'ros2', 'launch', 'rosbridge_server', 'rosbridge_websocket_launch.xml'
+                    'ros2', 'launch', 'ugv_launch_manager', 'rosbridge_websocket_custom.xml'
                 ],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 start_new_session=True
             )
             self.get_logger().info(
-                f"ROSBridge server started with PID: {self.rosbridge_process.pid}"
+                f"ROSBridge server started with PID: {self.rosbridge_process.pid} "
+                "(with action goal cancelation support)"
             )
         except Exception as e:
             self.get_logger().error(f"Failed to start ROSBridge server: {e}")
