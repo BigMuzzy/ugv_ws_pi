@@ -479,7 +479,7 @@ function loadServicePreset(preset) {
         'ugv_switch_navigation': {
             service: '/ugv/switch_mode',
             type: 'ugv_interface/srv/SwitchMode',
-            request: '{\n  "mode": "navigation"\n}'
+            request: '{\n  "mode": "navigation",\n  "arg_names": ["map_path"],\n  "arg_values": ["/home/ws/ugv_ws/maps/hall02.yaml"]\n}'
         },
         'ugv_stop_all': {
             service: '/ugv/stop_all',
