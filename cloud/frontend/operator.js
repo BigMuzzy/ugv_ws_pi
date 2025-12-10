@@ -4,8 +4,6 @@ let cmdVelChannel = null;
 let operatorSessionId = null;
 // window.selectedRobot is now defined globally in index.html as window.selectedRobot
 
-const CALLS_API_BASE = 'https://rtc.live.cloudflare.com/v1/apps';
-
 function log(msg, type = 'info') {
     const logEl = document.getElementById('log');
     const time = new Date().toLocaleTimeString();
@@ -25,11 +23,29 @@ function setStatus(msg, type = 'info') {
     el.className = `status ${type}`;
 }
 
-function getHeaders() {
-    return {
-        'Authorization': `Bearer ${document.getElementById('appToken').value}`,
-        'Content-Type': 'application/json'
-    };
+/**
+ * Get worker URL from config
+ */
+function getWorkerUrl() {
+    return document.getElementById('workerUrl').value;
+}
+
+/**
+ * Make authenticated request to backend API (no secrets exposed on frontend)
+ */
+async function backendFetch(endpoint, options = {}) {
+    const workerUrl = getWorkerUrl();
+    const url = `${workerUrl}${endpoint}`;
+
+    const response = await fetch(url, {
+        ...options,
+        headers: {
+            'Content-Type': 'application/json',
+            ...options.headers,
+        },
+    });
+
+    return response;
 }
 
 // Fetch robot list
@@ -93,25 +109,15 @@ async function connectToRobot() {
         log('No robot selected', 'error');
         return;
     }
-    
-    const appToken = document.getElementById('appToken').value;
-    if (!appToken) {
-        log('Please enter Cloudflare App Token', 'error');
-        return;
-    }
-    
-    const workerUrl = document.getElementById('workerUrl').value;
-    const appId = document.getElementById('appId').value;
-    
+
     try {
         log(`Connecting to robot ${window.selectedRobot.id}...`);
         setStatus('Connecting...', 'info');
-        
-        // 1. Create SFU session
+
+        // 1. Create SFU session (via backend API - no secrets exposed)
         log('Creating SFU session...');
-        const sessionResp = await fetch(`${CALLS_API_BASE}/${appId}/sessions/new`, {
+        const sessionResp = await backendFetch('/api/calls/sessions/new', {
             method: 'POST',
-            headers: getHeaders()
         });
         const sessionData = await sessionResp.json();
         operatorSessionId = sessionData.sessionId;
@@ -146,11 +152,10 @@ async function connectToRobot() {
         await peerConnection.setLocalDescription(offer);
         log('Created local offer');
         
-        // 5. Pull robot's video track
+        // 5. Pull robot's video track (via backend API)
         log(`Pulling video track: ${window.selectedRobot.videoTrackName} from session ${window.selectedRobot.sfuSessionId}`);
-        const pullResp = await fetch(`${CALLS_API_BASE}/${appId}/sessions/${operatorSessionId}/tracks/new`, {
+        const pullResp = await backendFetch(`/api/calls/sessions/${operatorSessionId}/tracks/new`, {
             method: 'POST',
-            headers: getHeaders(),
             body: JSON.stringify({
                 sessionDescription: { sdp: offer.sdp, type: 'offer' },
                 tracks: [{
@@ -174,14 +179,13 @@ async function connectToRobot() {
             log('Set remote description', 'success');
         }
         
-        // 7. Handle renegotiation if needed
+        // 7. Handle renegotiation if needed (via backend API)
         if (pullData.requiresImmediateRenegotiation) {
             const answer = await peerConnection.createAnswer();
             await peerConnection.setLocalDescription(answer);
-            
-            const renegoResp = await fetch(`${CALLS_API_BASE}/${appId}/sessions/${operatorSessionId}/renegotiate`, {
+
+            const renegoResp = await backendFetch(`/api/calls/sessions/${operatorSessionId}/renegotiate`, {
                 method: 'PUT',
-                headers: getHeaders(),
                 body: JSON.stringify({
                     sessionDescription: { sdp: answer.sdp, type: 'answer' }
                 })
@@ -194,10 +198,9 @@ async function connectToRobot() {
         log('Waiting for ICE connection...');
         await waitForICE();
         
-        // 9. Register DataChannel with SFU
-        const dcResp = await fetch(`${CALLS_API_BASE}/${appId}/sessions/${operatorSessionId}/datachannels/new`, {
+        // 9. Register DataChannel with SFU (via backend API)
+        const dcResp = await backendFetch(`/api/calls/sessions/${operatorSessionId}/datachannels/new`, {
             method: 'POST',
-            headers: getHeaders(),
             body: JSON.stringify({
                 dataChannels: [{
                     location: 'local',
@@ -229,9 +232,8 @@ async function connectToRobot() {
         }
         
         // 10. Signal robot to subscribe to our cmd_vel channel
-        const connectResp = await fetch(`${workerUrl}/connect`, {
+        const connectResp = await backendFetch('/connect', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 robotId: window.selectedRobot.id,
                 operatorSessionId: operatorSessionId

@@ -1,0 +1,6 @@
+# Cloudflare Calls API Configuration
+# Copy this file to .dev.vars and fill in your actual values
+# .dev.vars is gitignored and used for local development with wrangler dev
+
+CF_CALLS_APP_ID=your_cloudflare_app_id_here
+CF_CALLS_APP_TOKEN=your_cloudflare_app_token_here

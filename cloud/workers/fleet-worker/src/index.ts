@@ -19,6 +19,10 @@ export interface Env {
     ROBOT_REGISTRY: KVNamespace;
     /** Durable Object binding for WebSocket state management */
     FLEET_DO: DurableObjectNamespace;
+    /** Cloudflare Calls App ID (secret) */
+    CF_CALLS_APP_ID: string;
+    /** Cloudflare Calls API Token (secret) */
+    CF_CALLS_APP_TOKEN: string;
 }
 
 /** Robot status message sent via WebSocket */
@@ -98,7 +102,7 @@ const ROBOT_TTL_SECONDS = 60;
 /** CORS headers for browser access */
 const CORS_HEADERS = {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
 } as const;
 
@@ -224,8 +228,35 @@ export class FleetDO {
             return this.handleConnect(request);
         }
 
+        // -----------------------------------------------------------------
+        // Cloudflare Calls API Proxy Endpoints (to keep secrets on backend)
+        // -----------------------------------------------------------------
+
+        // POST /api/calls/sessions/new - Create new SFU session
+        if (request.method === 'POST' && url.pathname === '/api/calls/sessions/new') {
+            return this.proxyCallsAPI('POST', 'sessions/new', request);
+        }
+
+        // POST /api/calls/sessions/:sessionId/tracks/new - Pull remote track
+        if (request.method === 'POST' && url.pathname.match(/^\/api\/calls\/sessions\/[^/]+\/tracks\/new$/)) {
+            const sessionId = url.pathname.split('/')[4];
+            return this.proxyCallsAPI('POST', `sessions/${sessionId}/tracks/new`, request);
+        }
+
+        // PUT /api/calls/sessions/:sessionId/renegotiate - Renegotiate connection
+        if (request.method === 'PUT' && url.pathname.match(/^\/api\/calls\/sessions\/[^/]+\/renegotiate$/)) {
+            const sessionId = url.pathname.split('/')[4];
+            return this.proxyCallsAPI('PUT', `sessions/${sessionId}/renegotiate`, request);
+        }
+
+        // POST /api/calls/sessions/:sessionId/datachannels/new - Register DataChannel
+        if (request.method === 'POST' && url.pathname.match(/^\/api\/calls\/sessions\/[^/]+\/datachannels\/new$/)) {
+            const sessionId = url.pathname.split('/')[4];
+            return this.proxyCallsAPI('POST', `sessions/${sessionId}/datachannels/new`, request);
+        }
+
         // 404 for unknown routes
-        return new Response('Not Found', { 
+        return new Response('Not Found', {
             status: 404,
             headers: { 'Access-Control-Allow-Origin': '*' }
         });
@@ -352,6 +383,65 @@ export class FleetDO {
             console.error('Error processing connect request:', error);
             return new Response(
                 JSON.stringify({ error: 'Failed to process connect request' }),
+                { status: 500, headers: JSON_HEADERS }
+            );
+        }
+    }
+
+    /**
+     * Proxies requests to Cloudflare Calls API, adding authentication.
+     * This keeps the CF_CALLS_APP_TOKEN secret on the backend.
+     *
+     * @param method - HTTP method (POST, PUT, etc.)
+     * @param endpoint - Cloudflare Calls API endpoint path (without base URL or app ID)
+     * @param request - Original request from frontend (contains body if applicable)
+     */
+    private async proxyCallsAPI(method: string, endpoint: string, request: Request): Promise<Response> {
+        try {
+            const appId = this.env.CF_CALLS_APP_ID;
+            const appToken = this.env.CF_CALLS_APP_TOKEN;
+
+            if (!appId || !appToken) {
+                return new Response(
+                    JSON.stringify({ error: 'Cloudflare Calls credentials not configured' }),
+                    { status: 500, headers: JSON_HEADERS }
+                );
+            }
+
+            // Build Cloudflare Calls API URL
+            const callsUrl = `https://rtc.live.cloudflare.com/v1/apps/${appId}/${endpoint}`;
+
+            // Get request body if present
+            let body: string | undefined;
+            if (method !== 'GET' && request.body) {
+                body = await request.text();
+            }
+
+            // Make request to Cloudflare Calls API with authentication
+            const response = await fetch(callsUrl, {
+                method,
+                headers: {
+                    'Authorization': `Bearer ${appToken}`,
+                    'Content-Type': 'application/json',
+                },
+                body,
+            });
+
+            // Get response body
+            const responseBody = await response.text();
+
+            // Return response with CORS headers
+            return new Response(responseBody, {
+                status: response.status,
+                headers: {
+                    ...JSON_HEADERS,
+                    'Access-Control-Allow-Origin': '*',
+                },
+            });
+        } catch (error) {
+            console.error('Error proxying Cloudflare Calls API request:', error);
+            return new Response(
+                JSON.stringify({ error: 'Failed to proxy Calls API request' }),
                 { status: 500, headers: JSON_HEADERS }
             );
         }

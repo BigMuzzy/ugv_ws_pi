@@ -6,30 +6,39 @@ Cloudflare Worker that provides fleet management, robot registry, and signaling 
 
 ```mermaid
 graph TB
-    subgraph "Cloudflare Edge"
-        W[Fleet Worker]
+    subgraph "Frontend (Browser)"
+        O1[Operator UI<br/>No Secrets ✓]
+    end
+
+    subgraph "Backend (Cloudflare Edge)"
+        W[Fleet Worker<br/>Entry Point]
         DO[FleetDO<br/>Durable Object]
         KV[(ROBOT_REGISTRY<br/>KV Store)]
+        API[Calls API Proxy<br/>🔒 Secrets Here]
+    end
+
+    subgraph "Media Layer"
         SFU[Cloudflare Calls<br/>SFU]
     end
-    
+
     subgraph "Robots"
         R1[Robot 1<br/>WebRTC Bridge]
         R2[Robot 2<br/>WebRTC Bridge]
     end
-    
-    subgraph "Operators"
-        O1[Operator UI<br/>Browser]
-    end
-    
+
+    O1 -->|1 REST API<br/>No Auth Headers| W
+    O1 -->|2 Proxy Requests<br/>/api/calls/*| API
+    API -->|3 Add Auth<br/>Bearer TOKEN| SFU
+    W -->|Route| DO
+    DO -->|Read/Write| KV
     R1 -->|WebSocket| DO
     R2 -->|WebSocket| DO
-    DO -->|Read/Write| KV
-    O1 -->|REST API| W
-    W -->|Route| DO
-    R1 -->|Video/Data| SFU
-    R2 -->|Video/Data| SFU
-    O1 -->|Video/Data| SFU
+    R1 <-->|WebRTC<br/>Video/Data| SFU
+    R2 <-->|WebRTC<br/>Video/Data| SFU
+    O1 <-->|WebRTC<br/>Video/Data| SFU
+
+    style API fill:#e1f5ff,stroke:#0066cc,stroke-width:3px
+    style O1 fill:#e8f5e9,stroke:#4caf50,stroke-width:2px
 ```
 
 ## Components
@@ -65,6 +74,10 @@ Stateful singleton that maintains WebSocket connections to all robots and handle
 | WS | `/ws/operator?robotId=xxx` | WebSocket endpoint for operator rosbridge proxy |
 | GET | `/robots` | List all registered robots |
 | POST | `/connect` | Signal robot to subscribe to operator's DataChannel |
+| POST | `/api/calls/sessions/new` | **Proxy** - Create SFU session (adds auth) |
+| POST | `/api/calls/sessions/:id/tracks/new` | **Proxy** - Pull video track (adds auth) |
+| PUT | `/api/calls/sessions/:id/renegotiate` | **Proxy** - Renegotiate connection (adds auth) |
+| POST | `/api/calls/sessions/:id/datachannels/new` | **Proxy** - Create DataChannel (adds auth) |
 
 ### 3. ROBOT_REGISTRY (KV Store)
 
@@ -116,91 +129,119 @@ sequenceDiagram
     DO->>KV: DELETE robot:xxx
 ```
 
-### Operator Connection Flow
+### Operator Connection Flow (with API Proxy)
 
 ```mermaid
 sequenceDiagram
-    participant O as Operator UI
-    participant W as Fleet Worker
+    participant O as Operator UI<br/>(Frontend)
+    participant W as Fleet Worker<br/>(Backend)
     participant DO as FleetDO
     participant KV as ROBOT_REGISTRY
     participant SFU as Cloudflare SFU
     participant R as Robot Bridge
 
     Note over O: Operator opens UI
-    
+
     O->>W: GET /robots
     W->>DO: Forward request
     DO->>KV: List robot:*
     KV-->>DO: Robot entries
     DO-->>O: [{id, sfuSessionId, videoTrackName, status}]
-    
+
     Note over O: Operator selects robot
-    
-    O->>SFU: Create operator SFU session
-    SFU-->>O: operatorSessionId
-    
-    O->>SFU: Pull robot video track
-    SFU-->>O: Video stream
-    
-    O->>SFU: Register cmd_vel DataChannel
-    SFU-->>O: dataChannelId
-    
+
+    rect rgba(230, 240, 255, 1)
+        Note over O,SFU: API Proxy - No secrets in frontend
+        O->>W: POST /api/calls/sessions/new
+        W->>SFU: POST /sessions/new<br/>[Authorization: Bearer TOKEN]
+        SFU-->>W: {sessionId}
+        W-->>O: {sessionId}
+    end
+
+    rect rgba(230, 240, 255, 1)
+        O->>W: POST /api/calls/sessions/:id/tracks/new<br/>{pull robot video}
+        W->>SFU: POST /sessions/:id/tracks/new<br/>[Authorization: Bearer TOKEN]
+        SFU-->>W: {answer, tracks}
+        W-->>O: {answer, tracks}
+    end
+
+    rect rgba(230, 240, 255, 1)
+        O->>W: POST /api/calls/sessions/:id/datachannels/new<br/>{cmd_vel}
+        W->>SFU: POST /sessions/:id/datachannels/new<br/>[Authorization: Bearer TOKEN]
+        SFU-->>W: {dataChannelId}
+        W-->>O: {dataChannelId}
+    end
+
     O->>W: POST /connect {robotId, operatorSessionId}
     W->>DO: Forward request
     DO->>R: WS: {"action": "subscribe_cmd", "sessionId": "...", "channel": "cmd_vel"}
     R->>SFU: Subscribe to operator's cmd_vel channel
-    
+
     DO-->>O: {success: true}
-    
+
     Note over O,R: Connection established
-    
-    loop Control commands
+
+    loop Control commands (WebRTC direct)
         O->>SFU: cmd_vel DataChannel message
         SFU->>R: Forward to robot
         R->>R: Publish to /cmd_vel ROS topic
     end
 ```
 
-### Complete System Flow
+### Complete System Flow (with Backend API Proxy)
 
 ```mermaid
 sequenceDiagram
     participant R as Robot
     participant SFU as Cloudflare SFU
-    participant DO as Fleet DO
-    participant O as Operator
+    participant W as Fleet Worker<br/>(Backend + API Proxy)
+    participant O as Operator<br/>(Frontend)
 
     rect rgba(169, 169, 252, 1)
-        Note over R,DO: Phase 1: Robot Registration
-        R->>SFU: 1. Create session + publish video
-        R->>DO: 2. WebSocket connect
-        R->>DO: 3. Send status (robotId, sfuSessionId, trackName)
+        Note over R,W: Phase 1: Robot Registration
+        R->>SFU: 1. Create session + publish video<br/>[Robot has SFU credentials]
+        R->>W: 2. WebSocket connect to /ws/robot
+        R->>W: 3. Send status (robotId, sfuSessionId, trackName)
+        W->>W: 4. Store in KV + memory
     end
 
     rect rgba(207, 255, 207, 1)
-        Note over O,SFU: Phase 2: Operator Setup
-        O->>DO: 4. GET /robots
-        DO-->>O: 5. Robot list with SFU details
-        O->>SFU: 6. Create session
-        O->>SFU: 7. Pull robot video
-        O->>SFU: 8. Register cmd_vel channel
+        Note over O,W: Phase 2: Operator Setup (via API Proxy)
+        O->>W: 5. GET /robots
+        W-->>O: 6. Robot list with SFU details
+        O->>W: 7. POST /api/calls/sessions/new
+        W->>SFU: 8. Create session [+ Auth]
+        SFU-->>W: sessionId
+        W-->>O: sessionId
+        O->>W: 9. POST /api/calls/sessions/:id/tracks/new
+        W->>SFU: 10. Pull robot video [+ Auth]
+        SFU-->>W: answer
+        W-->>O: answer
+        O->>W: 11. POST /api/calls/sessions/:id/datachannels/new
+        W->>SFU: 12. Register cmd_vel [+ Auth]
+        SFU-->>W: dataChannelId
+        W-->>O: dataChannelId
     end
 
     rect rgba(255, 214, 214, 1)
         Note over O,R: Phase 3: Signaling
-        O->>DO: 9. POST /connect
-        DO->>R: 10. WS signal to subscribe
-        R->>SFU: 11. Subscribe to cmd_vel
+        O->>W: 13. POST /connect {robotId, sessionId}
+        W->>R: 14. WS signal to subscribe
+        R->>SFU: 15. Subscribe to cmd_vel
     end
 
     rect rgba(255, 255, 187, 1)
-        Note over O,R: Phase 4: Active Session
-        O->>SFU: 12. Send commands
-        SFU->>R: 13. Forward commands
-        R->>SFU: 14. Video frames
-        SFU->>O: 15. Forward video
+        Note over O,R: Phase 4: Active Session (WebRTC Direct)
+        loop Commands & Video
+            O->>SFU: 16. cmd_vel via DataChannel
+            SFU->>R: 17. Forward commands
+            R->>R: Publish to /cmd_vel
+            R->>SFU: 18. Video frames
+            SFU->>O: 19. Forward video
+        end
     end
+
+    Note over O,W: 🔒 All Cloudflare API auth handled by Worker<br/>Frontend never sees tokens
 ```
 
 ## API Reference
@@ -333,6 +374,28 @@ HTTP 404: Robot not connected to this Fleet DO
 
 ## Configuration
 
+### Environment Variables (Secrets)
+
+The worker requires Cloudflare Calls API credentials for the proxy functionality:
+
+| Variable | Description |
+|----------|-------------|
+| `CF_CALLS_APP_ID` | Cloudflare Calls Application ID |
+| `CF_CALLS_APP_TOKEN` | Cloudflare Calls API Token |
+
+**Set in production:**
+```bash
+wrangler secret put CF_CALLS_APP_ID
+wrangler secret put CF_CALLS_APP_TOKEN
+```
+
+**Set for local development:**
+Create `.dev.vars` file (gitignored):
+```
+CF_CALLS_APP_ID=your_app_id_here
+CF_CALLS_APP_TOKEN=your_token_here
+```
+
 ### wrangler.toml
 
 ```toml
@@ -350,6 +413,8 @@ class_name = "FleetDO"
 [[migrations]]
 tag = "v1"
 new_classes = ["FleetDO"]
+
+# Secrets configured via wrangler secret put (see above)
 ```
 
 ## Key Design Decisions
@@ -372,14 +437,28 @@ new_classes = ["FleetDO"]
 2. **Scalability**: SFU handles video encoding/decoding, Worker handles signaling only
 3. **Low Latency**: Media flows directly through SFU, not through Worker
 
+### Why API Proxy?
+
+1. **Security**: Keeps Cloudflare Calls credentials secret on backend
+2. **No Frontend Secrets**: Browser never sees API tokens
+3. **Centralized Auth**: All API authentication in one place
+4. **Future-Proof**: Easy to add rate limiting, logging, monitoring
+
 ## Development
 
 ```bash
 # Install dependencies
 npm install
 
-# Deploy
-npm run  deploy
+# Configure local secrets
+cp .dev.vars.example .dev.vars
+nano .dev.vars  # Add your credentials
+
+# Run locally
+wrangler dev
+
+# Deploy to production
+wrangler deploy
 ```
 
 ## File Structure

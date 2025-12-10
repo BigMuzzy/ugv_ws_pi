@@ -15,3 +15,8 @@ bindings = [
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["FleetDO"]
+
+# Environment variables for Cloudflare Calls API (set these as secrets using wrangler)
+# Run: wrangler secret put CF_CALLS_APP_ID
+# Run: wrangler secret put CF_CALLS_APP_TOKEN
+# Or use .dev.vars file for local development (see README)
