@@ -17,21 +17,27 @@ class FleetROSBridge {
         this.reconnectAttempts = 0;
         this.maxReconnectAttempts = options.maxReconnectAttempts || 5;
         this.reconnectDelay = options.reconnectDelay || 2000;
-        
+
         // Callbacks
         this.onConnection = options.onConnection || (() => {});
         this.onClose = options.onClose || (() => {});
         this.onError = options.onError || (() => {});
-        
+
         // Message handlers by operation ID
         this._messageHandlers = new Map();
         this._topicSubscribers = new Map();  // topic -> Set of callbacks
         this._topicSubscriptionIds = new Map();  // topic -> subscription id
         this._serviceCallbacks = new Map();  // service call id -> callback
         this._actionGoals = new Map();       // goal id -> { feedback, result }
-        
+
         // Auto-increment ID for operations
         this._nextId = 1;
+
+        // Heartbeat
+        this._heartbeatInterval = null;
+        this._heartbeatIntervalMs = options.heartbeatInterval || 30000;  // 30 seconds
+        this._lastPongTime = null;
+        this._heartbeatTimeout = null;
     }
     
     /**
@@ -56,14 +62,16 @@ class FleetROSBridge {
                 console.log('[ROSBridge] WebSocket connected');
                 this.connected = true;
                 this.reconnectAttempts = 0;
+                this._startHeartbeat();
                 this.onConnection();
             };
-            
+
             this.ws.onclose = (event) => {
                 console.log(`[ROSBridge] WebSocket closed: ${event.code} ${event.reason}`);
                 this.connected = false;
+                this._stopHeartbeat();
                 this.onClose(event);
-                
+
                 // Attempt reconnect if not a clean close
                 if (event.code !== 1000 && this.reconnectAttempts < this.maxReconnectAttempts) {
                     this.reconnectAttempts++;
@@ -91,6 +99,7 @@ class FleetROSBridge {
      * Disconnect from Fleet DO
      */
     disconnect() {
+        this._stopHeartbeat();
         if (this.ws) {
             this.ws.close(1000, 'Client disconnect');
             this.ws = null;
@@ -101,6 +110,48 @@ class FleetROSBridge {
         this._serviceCallbacks.clear();
         this._actionGoals.clear();
     }
+
+    /**
+     * Start heartbeat mechanism
+     */
+    _startHeartbeat() {
+        this._stopHeartbeat();  // Clear any existing heartbeat
+
+        this._lastPongTime = Date.now();
+
+        this._heartbeatInterval = setInterval(() => {
+            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                // Send ping
+                try {
+                    this.ws.send(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
+
+                    // Check if we got a pong from the last ping
+                    const timeSinceLastPong = Date.now() - this._lastPongTime;
+                    if (timeSinceLastPong > this._heartbeatIntervalMs * 2) {
+                        console.error('[ROSBridge] Heartbeat timeout - no pong received');
+                        // Force reconnection
+                        this.ws.close(4000, 'Heartbeat timeout');
+                    }
+                } catch (e) {
+                    console.error('[ROSBridge] Failed to send ping:', e);
+                }
+            }
+        }, this._heartbeatIntervalMs);
+    }
+
+    /**
+     * Stop heartbeat mechanism
+     */
+    _stopHeartbeat() {
+        if (this._heartbeatInterval) {
+            clearInterval(this._heartbeatInterval);
+            this._heartbeatInterval = null;
+        }
+        if (this._heartbeatTimeout) {
+            clearTimeout(this._heartbeatTimeout);
+            this._heartbeatTimeout = null;
+        }
+    }
     
     /**
      * Handle incoming message from Fleet DO
@@ -108,6 +159,12 @@ class FleetROSBridge {
     _handleMessage(data) {
         try {
             const msg = JSON.parse(data);
+
+            // Handle heartbeat pong
+            if (msg.type === 'pong') {
+                this._lastPongTime = Date.now();
+                return;
+            }
 
             // Check if this is a wrapped Fleet DO message or direct rosbridge message
             if (msg.type === 'rosbridge') {

@@ -2,6 +2,10 @@
 let peerConnection = null;
 let cmdVelChannel = null;
 let operatorSessionId = null;
+let lastConnectedRobot = null;  // Track last connected robot for auto-reconnect
+let isReconnecting = false;  // Prevent multiple simultaneous reconnection attempts
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 3;
 // window.selectedRobot is now defined globally in index.html as window.selectedRobot
 
 function log(msg, type = 'info') {
@@ -110,6 +114,14 @@ async function connectToRobot() {
         return;
     }
 
+    // Save the robot info for potential reconnection
+    lastConnectedRobot = { ...window.selectedRobot };
+
+    // Reset reconnect tracking on new manual connection
+    if (!isReconnecting) {
+        reconnectAttempts = 0;
+    }
+
     try {
         log(`Connecting to robot ${window.selectedRobot.id}...`);
         setStatus('Connecting...', 'info');
@@ -135,9 +147,33 @@ async function connectToRobot() {
         };
         
         peerConnection.oniceconnectionstatechange = () => {
-            log(`ICE state: ${peerConnection.iceConnectionState}`);
-            if (peerConnection.iceConnectionState === 'connected') {
+            const state = peerConnection.iceConnectionState;
+            log(`ICE state: ${state}`);
+
+            if (state === 'connected' || state === 'completed') {
                 setStatus(`Connected to ${window.selectedRobot.id}`, 'success');
+                reconnectAttempts = 0;  // Reset on successful connection
+                isReconnecting = false;
+            } else if (state === 'disconnected') {
+                log('ICE connection lost - will attempt reconnect if it does not recover', 'error');
+                setStatus('Connection unstable...', 'error');
+
+                // Give it 3 seconds to recover before attempting reconnect
+                setTimeout(() => {
+                    if (peerConnection && peerConnection.iceConnectionState === 'disconnected') {
+                        log('Connection did not recover - attempting reconnect', 'error');
+                        attemptReconnect();
+                    }
+                }, 3000);
+            } else if (state === 'failed') {
+                log('ICE connection failed!', 'error');
+                setStatus('Connection failed', 'error');
+                attemptReconnect();
+            } else if (state === 'closed') {
+                log('ICE connection closed', 'info');
+                if (!isReconnecting) {
+                    setStatus('Disconnected', 'info');
+                }
             }
         };
         
@@ -225,8 +261,20 @@ async function connectToRobot() {
                 log(`cmd_vel channel opened (id=${dcId})`, 'success');
                 enableControls();
             };
-            cmdVelChannel.onclose = () => log('cmd_vel channel closed');
-            cmdVelChannel.onerror = (e) => log(`cmd_vel error: ${e}`, 'error');
+            cmdVelChannel.onclose = () => {
+                log('cmd_vel channel closed', 'error');
+                if (!isReconnecting && lastConnectedRobot) {
+                    log('DataChannel closed unexpectedly - attempting reconnect', 'error');
+                    attemptReconnect();
+                }
+            };
+            cmdVelChannel.onerror = (e) => {
+                log(`cmd_vel error: ${e}`, 'error');
+                if (!isReconnecting && lastConnectedRobot) {
+                    log('DataChannel error - attempting reconnect', 'error');
+                    attemptReconnect();
+                }
+            };
             
             await waitForDataChannel();
         }
@@ -306,19 +354,75 @@ function waitForDataChannel() {
     });
 }
 
-function disconnect() {
+function attemptReconnect() {
+    if (isReconnecting) {
+        log('Reconnection already in progress', 'info');
+        return;
+    }
+
+    if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+        log(`Maximum reconnection attempts (${MAX_RECONNECT_ATTEMPTS}) reached`, 'error');
+        setStatus('Connection failed - please reconnect manually', 'error');
+        disconnect();
+        return;
+    }
+
+    if (!lastConnectedRobot) {
+        log('No robot to reconnect to', 'error');
+        disconnect();
+        return;
+    }
+
+    reconnectAttempts++;
+    isReconnecting = true;
+    log(`Reconnection attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}...`, 'info');
+    setStatus(`Reconnecting (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`, 'info');
+
+    // Clean up old connection first
     if (peerConnection) {
         peerConnection.close();
         peerConnection = null;
     }
     cmdVelChannel = null;
     operatorSessionId = null;
-    window.selectedRobot = null;
-    
+
+    // Restore the robot selection and reconnect
+    window.selectedRobot = { ...lastConnectedRobot };
+
+    // Wait a bit before reconnecting
+    setTimeout(() => {
+        connectToRobot().catch(err => {
+            log(`Reconnection failed: ${err.message}`, 'error');
+            isReconnecting = false;
+
+            // Try again if we haven't hit the limit
+            if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                setTimeout(() => attemptReconnect(), 2000);
+            } else {
+                disconnect();
+            }
+        });
+    }, 1000);
+}
+
+function disconnect() {
+    // Clean up connection state
+    if (peerConnection) {
+        peerConnection.close();
+        peerConnection = null;
+    }
+    cmdVelChannel = null;
+    operatorSessionId = null;
+
+    // Don't clear selectedRobot or lastConnectedRobot to allow manual reconnect
+    // Only clear reconnect state
+    isReconnecting = false;
+    reconnectAttempts = 0;
+
     document.getElementById('connectBtn').disabled = false;
     document.getElementById('disconnectBtn').disabled = true;
     document.getElementById('remoteVideo').srcObject = null;
-    
+
     disableControls();
     setStatus('Disconnected', 'info');
     log('Disconnected');
@@ -335,22 +439,57 @@ function disableControls() {
     knob.style.top = '50px';
 }
 
+// Rate limiting for DataChannel
+let lastSendTime = 0;
+const MIN_SEND_INTERVAL_MS = 50;  // 50ms = 20Hz max rate
+const MAX_BUFFER_SIZE = 65536;     // 64KB buffer threshold
+let droppedMessages = 0;
+
 // Send velocity command
 function sendCommand(linear, angular) {
-    if (cmdVelChannel && cmdVelChannel.readyState === 'open') {
+    // Update UI immediately for responsiveness
+    document.getElementById('linearValue').textContent = linear.toFixed(2);
+    document.getElementById('angularValue').textContent = angular.toFixed(2);
+
+    if (!cmdVelChannel || cmdVelChannel.readyState !== 'open') {
+        return;
+    }
+
+    // Rate limiting - prevent overwhelming the channel
+    const now = Date.now();
+    if (now - lastSendTime < MIN_SEND_INTERVAL_MS) {
+        return;  // Skip this message
+    }
+
+    // Backpressure handling - check buffer before sending
+    if (cmdVelChannel.bufferedAmount > MAX_BUFFER_SIZE) {
+        droppedMessages++;
+        if (droppedMessages % 10 === 0) {  // Log every 10th drop
+            log(`DataChannel buffer full (${cmdVelChannel.bufferedAmount} bytes), dropping messages (${droppedMessages} total)`, 'warn');
+        }
+        return;
+    }
+
+    try {
         const cmd = {
             linear: { x: linear, y: 0, z: 0 },
             angular: { x: 0, y: 0, z: angular }
         };
         cmdVelChannel.send(JSON.stringify(cmd));
-        
-        // Log occasionally to avoid spam
-        if (Math.random() < 0.05) {
-            log(`Sent cmd: linear=${linear.toFixed(2)}, angular=${angular.toFixed(2)}`);
+        lastSendTime = now;
+
+        // Reset dropped counter on successful send
+        if (droppedMessages > 0) {
+            droppedMessages = 0;
         }
+
+        // Log occasionally to avoid spam
+        if (Math.random() < 0.02) {  // Reduced from 5% to 2%
+            log(`Sent cmd: linear=${linear.toFixed(2)}, angular=${angular.toFixed(2)} (buffer: ${cmdVelChannel.bufferedAmount} bytes)`);
+        }
+    } catch (e) {
+        log(`Failed to send command: ${e.message}`, 'error');
     }
-    document.getElementById('linearValue').textContent = linear.toFixed(2);
-    document.getElementById('angularValue').textContent = angular.toFixed(2);
 }
 
 // Joystick control

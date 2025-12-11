@@ -593,6 +593,15 @@ export class FleetDO {
                 const messageStr = event.data as string;
                 const parsed = JSON.parse(messageStr);
 
+                // Handle heartbeat ping
+                if (parsed.type === 'ping') {
+                    webSocket.send(JSON.stringify({
+                        type: 'pong',
+                        timestamp: parsed.timestamp || Date.now()
+                    }));
+                    return;
+                }
+
                 // Validate message structure
                 if (parsed.type === 'rosbridge' && parsed.payload) {
                     // Wrapped format - validate payload has 'op' field
