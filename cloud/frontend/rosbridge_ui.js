@@ -564,6 +564,121 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+// ========== Maps List Functions ==========
+
+let availableMaps = [];
+let selectedMap = null;
+
+function refreshMapsList() {
+    if (!rosBridge || !rosBridge.connected) {
+        logROS('ROSBridge not connected', 'error');
+        updateMapsStatus('Not connected to ROSBridge', 'error');
+        return;
+    }
+
+    logROS('Fetching available maps...');
+    updateMapsStatus('Loading maps...', 'info');
+
+    rosBridge.callService(
+        '/ugv/list_maps',
+        'ugv_interface/srv/ListMaps',
+        { maps_directory: '' },  // Empty string uses default directory
+        (success, response) => {
+            if (success && response.success) {
+                availableMaps = response.map_names.map((name, index) => ({
+                    name: name,
+                    path: response.map_paths[index]
+                }));
+                displayMapsList(availableMaps);
+                logROS(`Found ${availableMaps.length} map(s)`, 'success');
+                updateMapsStatus(response.message, 'success');
+            } else {
+                const errorMsg = response.message || 'Failed to fetch maps';
+                logROS(`Error fetching maps: ${errorMsg}`, 'error');
+                updateMapsStatus(errorMsg, 'error');
+                displayMapsList([]);
+            }
+        }
+    );
+}
+
+function displayMapsList(maps) {
+    const listEl = document.getElementById('mapsList');
+
+    if (maps.length === 0) {
+        listEl.innerHTML = '<p style="color: #888; font-size: 12px;">No maps found</p>';
+        return;
+    }
+
+    listEl.innerHTML = maps.map(map => `
+        <div class="map-item" onclick="selectMap('${map.name}', '${map.path}', event)">
+            <div style="flex: 1;">
+                <div class="map-name">📍 ${map.name}</div>
+                <div class="map-path">${map.path}</div>
+            </div>
+            <button class="btn-small btn-success" onclick="event.stopPropagation(); switchToNavigationMode('${map.path}')">
+                Load Map
+            </button>
+        </div>
+    `).join('');
+}
+
+function selectMap(name, path, event) {
+    // Remove selection from all items
+    document.querySelectorAll('.map-item').forEach(el => {
+        el.classList.remove('selected');
+    });
+
+    // Add selection to clicked item
+    if (event && event.currentTarget) {
+        event.currentTarget.classList.add('selected');
+    }
+
+    selectedMap = { name, path };
+    logROS(`Selected map: ${name}`);
+}
+
+function switchToNavigationMode(mapPath) {
+    if (!rosBridge || !rosBridge.connected) {
+        logROS('ROSBridge not connected', 'error');
+        return;
+    }
+
+    const request = {
+        mode: 'navigation',
+        arg_names: ['map_path'],
+        arg_values: [mapPath]
+    };
+
+    logROS(`Switching to navigation mode with map: ${mapPath}...`);
+
+    rosBridge.callService(
+        '/ugv/switch_mode',
+        'ugv_interface/srv/SwitchMode',
+        request,
+        (success, response) => {
+            if (success && response.success) {
+                logROS(`Successfully switched to navigation mode`, 'success');
+            } else {
+                const errorMsg = response.message || 'Failed to switch mode';
+                logROS(`Error switching mode: ${errorMsg}`, 'error');
+            }
+        }
+    );
+}
+
+function updateMapsStatus(msg, type) {
+    const el = document.getElementById('mapsStatus');
+    el.textContent = msg;
+    el.className = `status ${type}`;
+    el.style.display = 'block';
+
+    // Auto-hide after 5 seconds
+    setTimeout(() => {
+        el.style.display = 'none';
+    }, 5000);
+}
+
 // Initialize on page load
 window.addEventListener('DOMContentLoaded', () => {
     initROSBridge();

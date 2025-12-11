@@ -6,7 +6,7 @@ Provides ROS2 services to dynamically switch between operational modes
 
 import rclpy
 from rclpy.node import Node
-from ugv_interface.srv import SwitchMode, GetMode, StopAll, MapSave
+from ugv_interface.srv import SwitchMode, GetMode, StopAll, MapSave, ListMaps
 from ament_index_python.packages import get_package_share_directory
 import os
 import yaml
@@ -68,11 +68,18 @@ class LaunchManagerNode(Node):
             self.save_map_callback
         )
 
+        self.list_maps_srv = self.create_service(
+            ListMaps,
+            '/ugv/list_maps',
+            self.list_maps_callback
+        )
+
         self.get_logger().info("Launch Manager ready! Available services:")
         self.get_logger().info("  - /ugv/switch_mode")
         self.get_logger().info("  - /ugv/get_mode")
         self.get_logger().info("  - /ugv/stop_all")
         self.get_logger().info("  - /ugv/save_map")
+        self.get_logger().info("  - /ugv/list_maps")
 
         # Auto-start default mode if specified
         if default_mode and default_mode != 'none':
@@ -443,6 +450,72 @@ class LaunchManagerNode(Node):
         success, message = self.save_map(map_path)
         response.success = success
         response.message = message
+
+        return response
+
+    def list_maps_callback(self, request, response):
+        """Handle list maps requests"""
+        maps_directory = request.maps_directory
+
+        # Use default directory if not provided
+        if not maps_directory:
+            maps_directory = '/home/ws/ugv_ws/maps'
+
+        self.get_logger().info(f"Listing maps in directory: {maps_directory}")
+
+        try:
+            # Check if directory exists
+            if not os.path.exists(maps_directory):
+                response.success = False
+                response.message = f"Maps directory does not exist: {maps_directory}"
+                response.map_names = []
+                response.map_paths = []
+                self.get_logger().error(response.message)
+                return response
+
+            if not os.path.isdir(maps_directory):
+                response.success = False
+                response.message = f"Path is not a directory: {maps_directory}"
+                response.map_names = []
+                response.map_paths = []
+                self.get_logger().error(response.message)
+                return response
+
+            # Find all .yaml files (map configuration files)
+            map_files = {}
+            for file in os.listdir(maps_directory):
+                if file.endswith('.yaml'):
+                    # Remove .yaml extension to get map name
+                    map_name = file[:-5]
+                    yaml_path = os.path.join(maps_directory, file)
+
+                    # Check if corresponding .pgm file exists
+                    pgm_path = os.path.join(maps_directory, f"{map_name}.pgm")
+                    if os.path.exists(pgm_path):
+                        map_files[map_name] = yaml_path
+                    else:
+                        self.get_logger().warn(
+                            f"Found {file} but missing corresponding .pgm file, skipping"
+                        )
+
+            # Sort map names alphabetically
+            sorted_maps = sorted(map_files.items())
+
+            response.success = True
+            response.map_names = [name for name, _ in sorted_maps]
+            response.map_paths = [path for _, path in sorted_maps]
+            response.message = f"Found {len(sorted_maps)} map(s) in {maps_directory}"
+
+            self.get_logger().info(
+                f"Successfully listed {len(sorted_maps)} map(s): {response.map_names}"
+            )
+
+        except Exception as e:
+            response.success = False
+            response.message = f"Error listing maps: {e}"
+            response.map_names = []
+            response.map_paths = []
+            self.get_logger().error(response.message)
 
         return response
 

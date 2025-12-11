@@ -1,0 +1,8 @@
+# Request
+string maps_directory  # Optional: Directory to search for maps. If empty, uses default /home/max/projects/ugv_ws_pi/maps
+---
+# Response
+bool success
+string message
+string[] map_names  # List of available map names (without .yaml/.pgm extensions)
+string[] map_paths  # Full paths to corresponding .yaml files

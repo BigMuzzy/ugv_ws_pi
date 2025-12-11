@@ -248,6 +248,39 @@
             margin-bottom: -2px;
             transition: all 0.2s;
         }
+
+        /* Maps List Styles */
+        .map-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            background: #16213e;
+            border-radius: 4px;
+            margin: 5px 0;
+            border: 2px solid transparent;
+            transition: all 0.2s;
+        }
+        .map-item:hover {
+            background: #1a2332;
+            border-color: #30363d;
+        }
+        .map-item.selected {
+            background: #1a3a2e;
+            border-color: #00d4ff;
+        }
+        .map-name {
+            color: #00d4ff;
+            font-weight: bold;
+            font-family: monospace;
+            font-size: 14px;
+        }
+        .map-path {
+            color: #888;
+            font-size: 11px;
+            font-family: monospace;
+            margin-top: 3px;
+        }
         .tab:hover { color: #eee; }
         .tab.active { 
             color: #00d4ff; 
@@ -553,6 +586,14 @@
             
             <!-- Navigation Tab -->
             <div id="tab-nav" class="tab-content">
+                <div class="ros-section">
+                    <h4>Available Maps <button class="btn-small ros-control" onclick="refreshMapsList()" disabled>🔄 Refresh</button></h4>
+                    <div id="mapsStatus" class="status info" style="display: none;"></div>
+                    <div id="mapsList" style="margin-top: 10px;">
+                        <p style="color: #888; font-size: 12px;">Connect to ROSBridge and click Refresh to load available maps</p>
+                    </div>
+                </div>
+
                 <div class="ros-section">
                     <h4>Quick Navigation Goals</h4>
                     <div class="ros-row">

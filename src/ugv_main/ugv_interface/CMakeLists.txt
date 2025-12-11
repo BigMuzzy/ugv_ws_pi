@@ -24,6 +24,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/SwitchMode.srv"
   "srv/GetMode.srv"
   "srv/StopAll.srv"
+  "srv/ListMaps.srv"
   "action/Behavior.action"
 )
 #ament_target_dependencies(
