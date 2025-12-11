@@ -54,11 +54,25 @@ class SFUManager:
             
             @self.pc.on("connectionstatechange")
             async def on_connectionstatechange():
-                self.logger.info(f"Connection state: {self.pc.connectionState}")
-                
-            @self.pc.on("iceconnectionstatechange") 
+                state = self.pc.connectionState
+                self.logger.info(f"Connection state: {state}")
+
+                # CRITICAL: Stop robot on connection failure to prevent runaway
+                if state in ('failed', 'disconnected', 'closed'):
+                    self.logger.error(f"PeerConnection {state} - sending STOP command")
+                    if self.on_command:
+                        self.on_command(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+            @self.pc.on("iceconnectionstatechange")
             async def on_iceconnectionstatechange():
-                self.logger.info(f"ICE connection state: {self.pc.iceConnectionState}")
+                state = self.pc.iceConnectionState
+                self.logger.info(f"ICE connection state: {state}")
+
+                # CRITICAL: Stop robot on ICE failure to prevent runaway
+                if state in ('failed', 'disconnected', 'closed'):
+                    self.logger.error(f"ICE connection {state} - sending STOP command")
+                    if self.on_command:
+                        self.on_command(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 
             # Add video track if available
             transceivers = []
@@ -195,17 +209,24 @@ class SFUManager:
     def _setup_datachannel(self, channel):
         """Set up event handlers for a DataChannel."""
         channel_label = channel.label
-        
+
         @channel.on("open")
         def on_open():
             self.logger.info(f"DataChannel '{channel_label}' opened")
-        
+
         @channel.on("close")
         def on_close():
-            self.logger.info(f"DataChannel '{channel_label}' closed")
+            self.logger.warning(f"DataChannel '{channel_label}' closed - stopping robot commands")
             if channel_label in self.data_channels:
                 del self.data_channels[channel_label]
-        
+
+            # CRITICAL: Stop the robot when DataChannel closes to prevent runaway
+            # This happens when operator disconnects or connection fails
+            if self.on_command and 'cmd_vel' in channel_label.lower():
+                self.logger.warning("Sending STOP command due to DataChannel closure")
+                # Send zero velocity to stop the robot
+                self.on_command(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
         @channel.on("message")
         def on_message(message):
             try:

@@ -286,17 +286,22 @@ class IntegratedSignalingClient:
         while self.running:
             try:
                 self.logger.info(f"Connecting to Fleet Worker: {self.worker_url}")
-                
-                async with websockets.connect(self.worker_url) as ws:
+
+                # Add ping/pong to detect stale connections (like rosbridge connection)
+                async with websockets.connect(
+                    self.worker_url,
+                    ping_interval=20,  # Send ping every 20 seconds
+                    ping_timeout=10    # Timeout if no pong received within 10 seconds
+                ) as ws:
                     self.ws = ws
-                    self.logger.info("Connected to Fleet Worker")
-                    
+                    self.logger.info("Connected to Fleet Worker (with heartbeat)")
+
                     # Send initial status
                     await self.send_status()
-                    
+
                     # Start heartbeat task
                     heartbeat_task = asyncio.create_task(self._heartbeat_loop())
-                    
+
                     try:
                         # Listen for messages
                         async for message in ws:
@@ -307,14 +312,14 @@ class IntegratedSignalingClient:
                             await heartbeat_task
                         except asyncio.CancelledError:
                             pass
-                            
+
             except ConnectionClosed as e:
                 self.logger.warning(f"Fleet Worker connection closed: {e}")
             except Exception as e:
                 self.logger.error(f"Fleet Worker connection error: {e}")
             finally:
                 self.ws = None
-                
+
             if self.running:
                 self.logger.info(f"Reconnecting to Fleet Worker in {self._reconnect_delay}s...")
                 await asyncio.sleep(self._reconnect_delay)

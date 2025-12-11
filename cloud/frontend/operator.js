@@ -146,28 +146,35 @@ async function connectToRobot() {
             document.getElementById('remoteVideo').srcObject = event.streams[0];
         };
         
+        peerConnection.onconnectionstatechange = () => {
+            const state = peerConnection.connectionState;
+            log(`PeerConnection state: ${state}`, state === 'failed' || state === 'disconnected' ? 'error' : 'info');
+        };
+
         peerConnection.oniceconnectionstatechange = () => {
             const state = peerConnection.iceConnectionState;
-            log(`ICE state: ${state}`);
+            log(`ICE connection state: ${state}`, state === 'failed' || state === 'disconnected' ? 'error' : 'info');
 
             if (state === 'connected' || state === 'completed') {
                 setStatus(`Connected to ${window.selectedRobot.id}`, 'success');
                 reconnectAttempts = 0;  // Reset on successful connection
                 isReconnecting = false;
             } else if (state === 'disconnected') {
-                log('ICE connection lost - will attempt reconnect if it does not recover', 'error');
-                setStatus('Connection unstable...', 'error');
+                log('⚠️ ICE connection lost - monitoring for recovery...', 'error');
+                setStatus('Connection unstable - waiting for recovery...', 'error');
 
                 // Give it 3 seconds to recover before attempting reconnect
                 setTimeout(() => {
                     if (peerConnection && peerConnection.iceConnectionState === 'disconnected') {
-                        log('Connection did not recover - attempting reconnect', 'error');
+                        log('❌ Connection did not recover - initiating reconnect', 'error');
                         attemptReconnect();
+                    } else if (peerConnection) {
+                        log('✓ Connection recovered automatically', 'success');
                     }
                 }, 3000);
             } else if (state === 'failed') {
-                log('ICE connection failed!', 'error');
-                setStatus('Connection failed', 'error');
+                log('❌ ICE connection failed - initiating immediate reconnect', 'error');
+                setStatus('Connection failed - reconnecting...', 'error');
                 attemptReconnect();
             } else if (state === 'closed') {
                 log('ICE connection closed', 'info');
@@ -175,6 +182,10 @@ async function connectToRobot() {
                     setStatus('Disconnected', 'info');
                 }
             }
+        };
+
+        peerConnection.onicegatheringstatechange = () => {
+            log(`ICE gathering state: ${peerConnection.iceGatheringState}`, 'info');
         };
         
         // 3. Add recvonly transceiver for video
@@ -258,23 +269,43 @@ async function connectToRobot() {
             });
             
             cmdVelChannel.onopen = () => {
-                log(`cmd_vel channel opened (id=${dcId})`, 'success');
+                log(`✓ cmd_vel DataChannel opened (id=${dcId}, readyState=${cmdVelChannel.readyState})`, 'success');
                 enableControls();
             };
-            cmdVelChannel.onclose = () => {
-                log('cmd_vel channel closed', 'error');
+
+            cmdVelChannel.onclose = (event) => {
+                log(`❌ cmd_vel DataChannel closed (readyState=${cmdVelChannel.readyState})`, 'error');
+                log(`   Close event: code=${event?.code}, reason=${event?.reason || 'none'}`, 'error');
+                log(`   PeerConnection state: ${peerConnection?.connectionState}, ICE: ${peerConnection?.iceConnectionState}`, 'error');
+
                 if (!isReconnecting && lastConnectedRobot) {
-                    log('DataChannel closed unexpectedly - attempting reconnect', 'error');
+                    log('⚡ DataChannel closed unexpectedly - attempting reconnect', 'error');
                     attemptReconnect();
                 }
             };
+
             cmdVelChannel.onerror = (e) => {
-                log(`cmd_vel error: ${e}`, 'error');
+                log(`❌ cmd_vel DataChannel error: ${e}`, 'error');
+                log(`   Error event: ${JSON.stringify(e)}`, 'error');
+                log(`   DataChannel state: ${cmdVelChannel?.readyState}, buffer: ${cmdVelChannel?.bufferedAmount || 0} bytes`, 'error');
+
                 if (!isReconnecting && lastConnectedRobot) {
-                    log('DataChannel error - attempting reconnect', 'error');
+                    log('⚡ DataChannel error - attempting reconnect', 'error');
                     attemptReconnect();
                 }
             };
+
+            // Monitor buffered amount periodically
+            const bufferMonitor = setInterval(() => {
+                if (cmdVelChannel && cmdVelChannel.readyState === 'open') {
+                    const buffered = cmdVelChannel.bufferedAmount;
+                    if (buffered > 32768) {  // 32KB threshold for warning
+                        log(`⚠️ DataChannel buffer high: ${buffered} bytes`, 'warn');
+                    }
+                } else {
+                    clearInterval(bufferMonitor);
+                }
+            }, 5000);  // Check every 5 seconds
             
             await waitForDataChannel();
         }
@@ -354,7 +385,7 @@ function waitForDataChannel() {
     });
 }
 
-function attemptReconnect() {
+async function attemptReconnect() {
     if (isReconnecting) {
         log('Reconnection already in progress', 'info');
         return;
@@ -363,12 +394,14 @@ function attemptReconnect() {
     if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
         log(`Maximum reconnection attempts (${MAX_RECONNECT_ATTEMPTS}) reached`, 'error');
         setStatus('Connection failed - please reconnect manually', 'error');
+        await cleanupSession();
         disconnect();
         return;
     }
 
     if (!lastConnectedRobot) {
         log('No robot to reconnect to', 'error');
+        await cleanupSession();
         disconnect();
         return;
     }
@@ -378,18 +411,13 @@ function attemptReconnect() {
     log(`Reconnection attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}...`, 'info');
     setStatus(`Reconnecting (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`, 'info');
 
-    // Clean up old connection first
-    if (peerConnection) {
-        peerConnection.close();
-        peerConnection = null;
-    }
-    cmdVelChannel = null;
-    operatorSessionId = null;
+    // Clean up old connection and session first
+    await cleanupSession();
 
     // Restore the robot selection and reconnect
     window.selectedRobot = { ...lastConnectedRobot };
 
-    // Wait a bit before reconnecting
+    // Wait a bit before reconnecting to allow cleanup to complete
     setTimeout(() => {
         connectToRobot().catch(err => {
             log(`Reconnection failed: ${err.message}`, 'error');
@@ -402,17 +430,43 @@ function attemptReconnect() {
                 disconnect();
             }
         });
-    }, 1000);
+    }, 1500);  // Increased delay to ensure cleanup completes
 }
 
-function disconnect() {
-    // Clean up connection state
+/**
+ * Clean up the SFU session to prevent zombie sessions
+ */
+async function cleanupSession() {
+    const sessionToCleanup = operatorSessionId;
+
+    // Close PeerConnection first
     if (peerConnection) {
-        peerConnection.close();
+        try {
+            peerConnection.close();
+        } catch (e) {
+            log(`Error closing PeerConnection: ${e.message}`, 'warn');
+        }
         peerConnection = null;
     }
     cmdVelChannel = null;
-    operatorSessionId = null;
+
+    // Close the SFU session via API to free resources
+    if (sessionToCleanup) {
+        try {
+            log(`Cleaning up SFU session: ${sessionToCleanup.substring(0, 16)}...`, 'info');
+            // Note: Cloudflare Calls API doesn't have explicit session delete
+            // Sessions auto-expire, but closing PeerConnection helps
+            // We could add a backend endpoint to track and clean sessions if needed
+        } catch (e) {
+            log(`Session cleanup warning: ${e.message}`, 'warn');
+        }
+        operatorSessionId = null;
+    }
+}
+
+async function disconnect() {
+    // Clean up session first
+    await cleanupSession();
 
     // Don't clear selectedRobot or lastConnectedRobot to allow manual reconnect
     // Only clear reconnect state
