@@ -114,6 +114,35 @@ async function connectToRobot() {
         return;
     }
 
+    // Fetch fresh robot data before connecting (unless auto-reconnecting, which already fetched)
+    if (!isReconnecting) {
+        try {
+            log('Fetching fresh robot data before connection...');
+            const workerUrl = getWorkerUrl();
+            const resp = await fetch(`${workerUrl}/robots`);
+            const robots = await resp.json();
+
+            const freshRobotData = robots.find(r => r.id === window.selectedRobot.id);
+
+            if (!freshRobotData) {
+                log(`Robot ${window.selectedRobot.id} not found - may be offline`, 'error');
+                setStatus('Robot not available', 'error');
+                return;
+            }
+
+            // Update with fresh session data
+            log(`Using fresh session: ${freshRobotData.sfuSessionId?.substring(0, 16)}..., track: ${freshRobotData.videoTrackName}`, 'info');
+            window.selectedRobot = {
+                id: freshRobotData.id,
+                sfuSessionId: freshRobotData.sfuSessionId,
+                videoTrackName: freshRobotData.videoTrackName
+            };
+        } catch (err) {
+            log(`Failed to fetch fresh robot data: ${err.message}`, 'warn');
+            log('Continuing with cached data...', 'warn');
+        }
+    }
+
     // Save the robot info for potential reconnection
     lastConnectedRobot = { ...window.selectedRobot };
 
@@ -414,8 +443,48 @@ async function attemptReconnect() {
     // Clean up old connection and session first
     await cleanupSession();
 
-    // Restore the robot selection and reconnect
-    window.selectedRobot = { ...lastConnectedRobot };
+    // CRITICAL FIX: Fetch fresh robot data before reconnecting
+    // The robot may have a new SFU session and video track after going offline/online
+    try {
+        const workerUrl = getWorkerUrl();
+        const resp = await fetch(`${workerUrl}/robots`);
+        const robots = await resp.json();
+
+        // Find the robot we were connected to
+        const freshRobotData = robots.find(r => r.id === lastConnectedRobot.id);
+
+        if (!freshRobotData) {
+            log(`Robot ${lastConnectedRobot.id} not found - may be offline`, 'error');
+            isReconnecting = false;
+
+            if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                setTimeout(() => attemptReconnect(), 2000);
+            } else {
+                disconnect();
+            }
+            return;
+        }
+
+        // Update with fresh session data
+        log(`Refreshed robot data: session ${freshRobotData.sfuSessionId?.substring(0, 16)}..., track ${freshRobotData.videoTrackName}`, 'info');
+        window.selectedRobot = {
+            id: freshRobotData.id,
+            sfuSessionId: freshRobotData.sfuSessionId,
+            videoTrackName: freshRobotData.videoTrackName
+        };
+        lastConnectedRobot = { ...window.selectedRobot };
+
+    } catch (err) {
+        log(`Failed to fetch fresh robot data: ${err.message}`, 'error');
+        isReconnecting = false;
+
+        if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+            setTimeout(() => attemptReconnect(), 2000);
+        } else {
+            disconnect();
+        }
+        return;
+    }
 
     // Wait a bit before reconnecting to allow cleanup to complete
     setTimeout(() => {

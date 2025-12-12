@@ -9,6 +9,7 @@ from rclpy.node import Node
 from ugv_interface.srv import SwitchMode, GetMode, StopAll, MapSave, ListMaps
 from ament_index_python.packages import get_package_share_directory
 import os
+import signal
 import yaml
 import subprocess
 
@@ -137,17 +138,29 @@ class LaunchManagerNode(Node):
         """Stop ROSBridge WebSocket server"""
         if self.rosbridge_process:
             try:
-                self.get_logger().info("Stopping ROSBridge server...")
-                self.rosbridge_process.terminate()
+                pid = self.rosbridge_process.pid
+                self.get_logger().info(f"Stopping ROSBridge server (PID: {pid})...")
+
+                # Kill the entire process group
+                try:
+                    os.killpg(os.getpgid(pid), signal.SIGTERM)
+                except ProcessLookupError:
+                    return  # Already dead
+
                 try:
                     self.rosbridge_process.wait(timeout=5)
                     self.get_logger().info("ROSBridge server terminated cleanly")
                 except subprocess.TimeoutExpired:
-                    self.get_logger().warn("ROSBridge server did not terminate, killing...")
-                    self.rosbridge_process.kill()
+                    self.get_logger().warn("ROSBridge server did not terminate, force killing...")
+                    try:
+                        os.killpg(os.getpgid(pid), signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
                     self.rosbridge_process.wait()
             except Exception as e:
                 self.get_logger().error(f"Error stopping ROSBridge server: {e}")
+            finally:
+                self.rosbridge_process = None
 
     def start_webrtc_bridge(self):
         """Start WebRTC ROS2 bridge in background"""
@@ -172,17 +185,29 @@ class LaunchManagerNode(Node):
         """Stop WebRTC ROS2 bridge"""
         if self.webrtc_bridge_process:
             try:
-                self.get_logger().info("Stopping WebRTC bridge...")
-                self.webrtc_bridge_process.terminate()
+                pid = self.webrtc_bridge_process.pid
+                self.get_logger().info(f"Stopping WebRTC bridge (PID: {pid})...")
+
+                # Kill the entire process group
+                try:
+                    os.killpg(os.getpgid(pid), signal.SIGTERM)
+                except ProcessLookupError:
+                    return  # Already dead
+
                 try:
                     self.webrtc_bridge_process.wait(timeout=5)
                     self.get_logger().info("WebRTC bridge terminated cleanly")
                 except subprocess.TimeoutExpired:
-                    self.get_logger().warn("WebRTC bridge did not terminate, killing...")
-                    self.webrtc_bridge_process.kill()
+                    self.get_logger().warn("WebRTC bridge did not terminate, force killing...")
+                    try:
+                        os.killpg(os.getpgid(pid), signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
                     self.webrtc_bridge_process.wait()
             except Exception as e:
                 self.get_logger().error(f"Error stopping WebRTC bridge: {e}")
+            finally:
+                self.webrtc_bridge_process = None
 
     def save_map(self, map_path: str) -> tuple[bool, str]:
         """Save the current map using map_saver CLI
@@ -527,19 +552,30 @@ def main(args=None):
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
-        pass
+        print("\nShutting down launch manager...")
     finally:
-        # Clean shutdown
+        # Clean shutdown - do this BEFORE destroying the node
+        # so logger still works
         if node.process_mgr.is_active():
             node.get_logger().info("Shutting down active launch process...")
             node.process_mgr.stop_launch()
 
         # Stop persistent background processes
+        node.get_logger().info("Stopping background services...")
         node.stop_webrtc_bridge()
         node.stop_rosbridge()
 
-        node.destroy_node()
-        rclpy.shutdown()
+        # Now destroy the node and shutdown rclpy
+        try:
+            node.destroy_node()
+        except:
+            pass  # Ignore errors if already destroyed
+
+        try:
+            if rclpy.ok():
+                rclpy.shutdown()
+        except:
+            pass  # Ignore errors if already shutdown
 
 
 if __name__ == '__main__':
