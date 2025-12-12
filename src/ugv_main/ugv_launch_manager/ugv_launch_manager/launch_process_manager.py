@@ -53,10 +53,12 @@ class LaunchProcessManager:
             env['PYTHONUNBUFFERED'] = '1'  # Ensure real-time output
 
             # Start process
+            # Don't use PIPE for stdout/stderr to avoid buffer deadlock
+            # Output goes to /dev/null to prevent terminal spam
             self.active_process = subprocess.Popen(
                 cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 env=env,
                 preexec_fn=os.setsid  # Create new process group
             )

@@ -121,8 +121,8 @@ class LaunchManagerNode(Node):
                 [
                     'ros2', 'launch', 'ugv_launch_manager', 'rosbridge_websocket_custom.xml'
                 ],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 start_new_session=True
             )
             self.get_logger().info(
@@ -157,8 +157,8 @@ class LaunchManagerNode(Node):
                 [
                     'ros2', 'launch', 'webrtc_ros2_bridge', 'bridge.launch.py'
                 ],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 start_new_session=True
             )
             self.get_logger().info(
