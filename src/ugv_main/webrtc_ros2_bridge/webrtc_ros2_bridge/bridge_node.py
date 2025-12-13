@@ -87,6 +87,7 @@ class WebRTCBridgeNode(Node):
                 calls_client=self._calls_client,
                 video_source=self._video_source,
                 on_command=self._on_command,
+                on_session_recovered=self._on_session_recovered,
                 logger=self.get_logger()
             )
         else:
@@ -112,6 +113,7 @@ class WebRTCBridgeNode(Node):
                 rosbridge_url=rosbridge_url,
                 on_subscribe_cmd=self._on_subscribe_cmd,
                 get_video_track_name=self._get_video_track_name,
+                get_connection_state=self._get_connection_state,
                 enable_rosbridge_proxy=enable_rosbridge_proxy,
                 logger=self.get_logger()
             )
@@ -344,6 +346,22 @@ class WebRTCBridgeNode(Node):
         if self._sfu_manager:
             return self._sfu_manager.video_track_name
         return None
+
+    def _get_connection_state(self):
+        """Get the current peer connection state from SFU manager."""
+        if self._sfu_manager:
+            return self._sfu_manager.get_connection_state()
+        return None
+
+    def _on_session_recovered(self):
+        """Handle SFU session recovery - notify signaling client of new session."""
+        self.get_logger().info("Session recovered, sending updated status to Fleet Worker")
+        if self._signaling_client and self._loop:
+            # Schedule send_status on the async loop
+            asyncio.run_coroutine_threadsafe(
+                self._signaling_client.send_status(),
+                self._loop
+            )
 
     def _on_command(self, linear_x, linear_y, linear_z,
                     angular_x, angular_y, angular_z):

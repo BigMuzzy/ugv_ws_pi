@@ -229,11 +229,12 @@ class IntegratedSignalingClient:
         rosbridge_url: str = "ws://localhost:9090",
         on_subscribe_cmd: Optional[Callable] = None,
         get_video_track_name: Optional[Callable] = None,
+        get_connection_state: Optional[Callable] = None,
         enable_rosbridge_proxy: bool = True,
         logger: Optional[logging.Logger] = None
     ):
         """Initialize the integrated signaling client.
-        
+
         Args:
             worker_url: Fleet Worker WebSocket URL
             robot_id: Unique robot identifier
@@ -241,6 +242,7 @@ class IntegratedSignalingClient:
             rosbridge_url: Local rosbridge_server URL
             on_subscribe_cmd: Callback for DataChannel subscription commands
             get_video_track_name: Callback to get current video track name
+            get_connection_state: Callback to check if peer connection is alive
             enable_rosbridge_proxy: Whether to enable rosbridge proxying
             logger: Logger instance
         """
@@ -249,6 +251,7 @@ class IntegratedSignalingClient:
         self.calls_client = calls_client
         self.on_subscribe_cmd = on_subscribe_cmd
         self.get_video_track_name = get_video_track_name
+        self.get_connection_state = get_connection_state
         self.logger = logger or logging.getLogger(__name__)
         
         self.ws = None
@@ -341,21 +344,36 @@ class IntegratedSignalingClient:
         self.logger.info("Signaling client stopped")
         
     async def send_status(self):
-        """Send status update to Fleet Worker."""
-        if self.ws and self.calls_client.session_id:
-            msg = {
-                "type": "status",
-                "robotId": self.robot_id,
-                "sfuSessionId": self.calls_client.session_id
-            }
-            
-            if self.get_video_track_name:
-                track_name = self.get_video_track_name()
-                if track_name:
-                    msg["videoTrackName"] = track_name
-                    
-            await self.ws.send(json.dumps(msg))
-            self.logger.debug(f"Sent status: {msg}")
+        """Send status update to Fleet Worker.
+
+        Only sends status if:
+        1. WebSocket is connected
+        2. We have a valid session ID
+        3. Peer connection is in a healthy state (connected or new)
+        """
+        if not self.ws or not self.calls_client.session_id:
+            return
+
+        # Check if peer connection is alive
+        if self.get_connection_state:
+            conn_state = self.get_connection_state()
+            if conn_state in ('failed', 'disconnected', 'closed'):
+                self.logger.warning(f"Skipping status update - peer connection is {conn_state}")
+                return
+
+        msg = {
+            "type": "status",
+            "robotId": self.robot_id,
+            "sfuSessionId": self.calls_client.session_id
+        }
+
+        if self.get_video_track_name:
+            track_name = self.get_video_track_name()
+            if track_name:
+                msg["videoTrackName"] = track_name
+
+        await self.ws.send(json.dumps(msg))
+        self.logger.debug(f"Sent status: {msg}")
             
     async def _heartbeat_loop(self):
         """Send periodic status updates."""
