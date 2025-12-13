@@ -46,6 +46,8 @@ graph TB
 - **Low Latency**: Cloudflare's edge network provides sub-100ms latency globally
 - **Scalable**: SFU architecture supports multiple operators viewing the same robot
 - **Secure**: All connections use DTLS/SRTP encryption
+- **Self-Healing**: Automatic session recovery with proactive health monitoring and exponential backoff
+- **ROSBridge Integration**: Optional WebSocket proxy for full ROS topic/service access from browser
 
 ## Components
 
@@ -54,8 +56,9 @@ graph TB
 | File | Description |
 |------|-------------|
 | `bridge_node.py` | Main ROS2 node that orchestrates all components |
-| `sfu_manager.py` | Manages WebRTC connection to Cloudflare Calls SFU |
-| `signaling_client.py` | WebSocket client for Fleet Worker communication |
+| `sfu_manager.py` | Manages WebRTC connection to Cloudflare Calls SFU with automatic session recovery |
+| `signaling_client.py` | WebSocket client for Fleet Worker communication with connection validation |
+| `rosbridge_proxy.py` | Integrated signaling client with ROSBridge WebSocket proxying |
 | `cloudflare_calls.py` | HTTP client for Cloudflare Calls REST API |
 | `video_source.py` | Captures video from camera and creates WebRTC track |
 | `command_handler.py` | Receives commands and publishes to `/cmd_vel` |
@@ -109,6 +112,17 @@ sequenceDiagram
     O->>S: DataChannel: {linear:{x:0.5}, angular:{z:0.1}}
     S->>R: DataChannel: {linear:{x:0.5}, angular:{z:0.1}}
     R->>R: Publish to /cmd_vel
+
+    Note over R,S: 6. Connection Failure & Recovery
+    S--xR: Connection lost
+    R->>R: Health monitor detects failure (15s)
+    R->>R: Stop robot (send zero velocity)
+    R->>S: POST /sessions/new
+    S-->>R: New sessionId
+    R->>S: POST /tracks/new (new video track)
+    R->>S: WebRTC: Reconnect
+    R->>W: WS: {"type":"status", "sfuSessionId":"NEW_ID"}
+    W->>W: Update KV with new session
 ```
 
 ## Configuration
@@ -134,6 +148,8 @@ cloudflare:
 
 fleet:
   worker_url: "wss://fleet-worker.your-domain.workers.dev/ws/robot"
+  enable_rosbridge_proxy: true  # Optional: enable ROSBridge WebSocket proxying
+  rosbridge_url: "ws://localhost:9090"  # Local rosbridge_server URL
 ```
 
 ### Environment Variables
@@ -213,22 +229,84 @@ The SFU approach guarantees connectivity at the cost of routing all media throug
 - `geometry_msgs`
 - `std_msgs`
 
+## Session Recovery and Reliability
+
+The bridge includes comprehensive session recovery mechanisms to handle network issues and maintain reliable connections:
+
+### Automatic Session Recovery
+
+When the WebRTC connection fails, the system automatically:
+
+1. **Detects failures** via connection state monitoring
+2. **Stops the robot** immediately to prevent runaway behavior
+3. **Creates a new SFU session** with Cloudflare
+4. **Re-establishes the WebRTC connection**
+5. **Updates the Fleet Worker** with the new session ID
+
+### Proactive Health Monitoring
+
+A background health monitor checks every 10 seconds:
+- Peer connection state
+- ICE connection state
+- Duration of degraded states
+
+If the connection is degraded for more than 15 seconds (before Cloudflare's 30-second timeout), recovery is triggered proactively.
+
+### Exponential Backoff
+
+To handle persistent network issues gracefully:
+- 1st recovery attempt: 2 seconds delay
+- 2nd attempt: 4 seconds delay
+- 3rd attempt: 8 seconds delay
+- Max delay: 30 seconds
+- Counter resets after 5 minutes of stable connection
+
+### Session Validation
+
+After recovery, the system:
+- Waits 5 seconds for connection to stabilize
+- Validates the peer connection reached 'connected' state
+- Logs warnings if connection is unstable
+- Will re-trigger recovery if needed
+
+### What This Means for You
+
+- **Transient network issues**: Robot automatically recovers within 15-20 seconds
+- **Extended outages**: System keeps retrying with increasing delays until network is restored
+- **Operator reconnection**: Always connect to a fresh, valid session (no stale session IDs)
+- **Safety**: Robot always stops on connection loss to prevent runaway
+
 ## Troubleshooting
 
 ### Video not showing
 - Check camera permissions: `ls -la /dev/video0`
 - Verify camera works: `ffplay /dev/video0`
 - Check SFU connection logs for errors
+- Look for "Session recovery" messages indicating connection issues
 
 ### Commands not received
 - Verify DataChannel shows "open" state on both sides
 - Check that negotiated IDs match (logged on both sides)
 - Ensure Fleet Worker signaling completed
+- Check for connection state warnings in logs
 
 ### Robot not appearing in list
 - Check WebSocket connection to Fleet Worker
 - Verify KV entry exists (use Wrangler dashboard)
 - Check robot is sending status with `sfuSessionId`
+- Ensure connection state is healthy (not 'disconnected' or 'failed')
+
+### Frequent session recovery
+- Check network stability between robot and internet
+- Look for patterns in recovery timing (every 30s suggests Cloudflare timeout)
+- Verify STUN server is reachable: `stun.cloudflare.com:3478`
+- Check for NAT/firewall issues blocking UDP traffic
+
+### Recovery not working
+- Check logs for "Session recovery failed" messages
+- Verify Cloudflare credentials are still valid
+- Ensure `/api/calls/sessions/new` endpoint is accessible
+- Check for API rate limiting errors
 
 ## References
 

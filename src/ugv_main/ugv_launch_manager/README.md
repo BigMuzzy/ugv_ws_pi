@@ -84,12 +84,23 @@ ros2 launch ugv_launch_manager manager.launch.py
 
 # Auto-start in a specific mode
 ros2 launch ugv_launch_manager manager.launch.py default_mode:=mapping
+
+# Enable debug mode - show all subprocess output
+ros2 launch ugv_launch_manager manager.launch.py debug:=true
+
+# Combine parameters
+ros2 launch ugv_launch_manager manager.launch.py default_mode:=navigation debug:=true
 ```
 
-**Auto-start behavior:**
-- The `default_mode` parameter automatically starts the specified mode on launch
-- Set to `none` to start without any mode active
-- Default is `idle`
+**Launch Parameters:**
+- **`default_mode`**: Mode to auto-start on initialization
+  - Options: `idle`, `mapping`, `navigation`, `none`
+  - Default: `idle`
+- **`debug`**: Enable debug mode to show all subprocess output to console
+  - Options: `true`, `false`
+  - Default: `false`
+  - **Use for debugging**: Shows output from mode processes, WebRTC, and ROSBridge
+  - **Warning**: Debug mode may cause pipe buffer issues on very verbose nodes
 
 ### Check Current Mode
 ```bash
@@ -360,6 +371,12 @@ Configure the launch manager via [launch/manager.launch.py](launch/manager.launc
   - Default: `'idle'`
   - Set to `'none'` to start without any mode
   - Options: `'idle'`, `'mapping'`, `'navigation'`, `'none'`
+
+- **`debug`**: Show all subprocess output to console
+  - Default: `false`
+  - Set to `true` for debugging subprocess issues
+  - Useful for troubleshooting mode launch problems
+  - May cause performance issues with very verbose output
 
 ## Known Behavior
 

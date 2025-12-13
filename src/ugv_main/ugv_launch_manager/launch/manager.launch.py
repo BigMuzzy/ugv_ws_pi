@@ -18,6 +18,13 @@ def generate_launch_description():
         description='Mode to start automatically on launch (idle, mapping, navigation, or none)'
     )
 
+    # Declare launch argument for debug mode
+    debug_arg = DeclareLaunchArgument(
+        'debug',
+        default_value='false',
+        description='Enable debug mode - show all subprocess output to console (true/false)'
+    )
+
     # Launch manager node
     manager_node = Node(
         package='ugv_launch_manager',
@@ -26,11 +33,13 @@ def generate_launch_description():
         output='screen',
         emulate_tty=True,
         parameters=[{
-            'default_mode': LaunchConfiguration('default_mode')
+            'default_mode': LaunchConfiguration('default_mode'),
+            'debug': LaunchConfiguration('debug')
         }]
     )
 
     return LaunchDescription([
         default_mode_arg,
+        debug_arg,
         manager_node,
     ])

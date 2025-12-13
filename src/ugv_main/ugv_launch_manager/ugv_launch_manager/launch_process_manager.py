@@ -14,8 +14,9 @@ from typing import Optional, Dict, List
 class LaunchProcessManager:
     """Manages launch file processes"""
 
-    def __init__(self, logger=None):
+    def __init__(self, logger=None, debug: bool = False):
         self.logger = logger
+        self.debug = debug
         self.active_process: Optional[subprocess.Popen] = None
         self.current_mode: str = 'idle'
         self.process_start_time: Optional[float] = None
@@ -53,15 +54,22 @@ class LaunchProcessManager:
             env['PYTHONUNBUFFERED'] = '1'  # Ensure real-time output
 
             # Start process
-            # Don't use PIPE for stdout/stderr to avoid buffer deadlock
-            # Output goes to /dev/null to prevent terminal spam
-            self.active_process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                env=env,
-                preexec_fn=os.setsid  # Create new process group
-            )
+            # In debug mode, show output to console; otherwise silence to avoid buffer deadlock
+            if self.debug:
+                self.active_process = subprocess.Popen(
+                    cmd,
+                    env=env,
+                    preexec_fn=os.setsid  # Create new process group
+                )
+            else:
+                # Output goes to /dev/null to prevent terminal spam and buffer deadlock
+                self.active_process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    env=env,
+                    preexec_fn=os.setsid  # Create new process group
+                )
 
             self.process_start_time = time.time()
 

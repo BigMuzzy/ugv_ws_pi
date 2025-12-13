@@ -28,8 +28,18 @@ class LaunchManagerNode(Node):
         self.declare_parameter('default_mode', 'idle')
         default_mode = self.get_parameter('default_mode').value
 
+        # Declare and get debug parameter
+        self.declare_parameter('debug', False)
+        self.debug_mode = self.get_parameter('debug').value
+
+        if self.debug_mode:
+            self.get_logger().info("DEBUG MODE ENABLED - All subprocess output will be shown")
+
         # Process manager
-        self.process_mgr = LaunchProcessManager(logger=self.get_logger())
+        self.process_mgr = LaunchProcessManager(
+            logger=self.get_logger(),
+            debug=self.debug_mode
+        )
 
         # Store current mode arguments for cleanup operations
         self.current_mode_arguments = {}
@@ -118,14 +128,24 @@ class LaunchManagerNode(Node):
         """Start ROSBridge WebSocket server in background"""
         try:
             self.get_logger().info("Starting ROSBridge WebSocket server...")
-            self.rosbridge_process = subprocess.Popen(
-                [
-                    'ros2', 'launch', 'ugv_launch_manager', 'rosbridge_websocket_custom.xml'
-                ],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True
-            )
+
+            # In debug mode, show output; otherwise silence it
+            if self.debug_mode:
+                self.rosbridge_process = subprocess.Popen(
+                    [
+                        'ros2', 'launch', 'ugv_launch_manager', 'rosbridge_websocket_custom.xml'
+                    ],
+                    start_new_session=True
+                )
+            else:
+                self.rosbridge_process = subprocess.Popen(
+                    [
+                        'ros2', 'launch', 'ugv_launch_manager', 'rosbridge_websocket_custom.xml'
+                    ],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True
+                )
             self.get_logger().info(
                 f"ROSBridge server started with PID: {self.rosbridge_process.pid} "
                 "(with action goal cancelation support)"
@@ -166,14 +186,24 @@ class LaunchManagerNode(Node):
         """Start WebRTC ROS2 bridge in background"""
         try:
             self.get_logger().info("Starting WebRTC ROS2 bridge...")
-            self.webrtc_bridge_process = subprocess.Popen(
-                [
-                    'ros2', 'launch', 'webrtc_ros2_bridge', 'bridge.launch.py'
-                ],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True
-            )
+
+            # In debug mode, show output; otherwise silence it
+            if self.debug_mode:
+                self.webrtc_bridge_process = subprocess.Popen(
+                    [
+                        'ros2', 'launch', 'webrtc_ros2_bridge', 'bridge.launch.py'
+                    ],
+                    start_new_session=True
+                )
+            else:
+                self.webrtc_bridge_process = subprocess.Popen(
+                    [
+                        'ros2', 'launch', 'webrtc_ros2_bridge', 'bridge.launch.py'
+                    ],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True
+                )
             self.get_logger().info(
                 f"WebRTC bridge started with PID: {self.webrtc_bridge_process.pid}"
             )
