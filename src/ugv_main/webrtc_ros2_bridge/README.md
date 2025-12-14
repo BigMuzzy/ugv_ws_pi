@@ -202,6 +202,16 @@ Commands are sent as JSON over the `cmd_vel` DataChannel:
 
 The robot converts this to a `geometry_msgs/Twist` message and publishes to `/cmd_vel`.
 
+### Command Rate Limiting
+
+The operator frontend implements command rate limiting to prevent overwhelming the DataChannel:
+
+- **Maximum rate**: 10 commands per second (100ms minimum interval)
+- **Backpressure handling**: Commands are dropped if the DataChannel buffer exceeds 64KB
+- **Dropped message tracking**: Warnings are logged when messages are dropped due to buffer overflow
+
+This throttling reduces SCTP transport load and improves connection stability during teleoperation, especially when both video streaming (uplink) and command transmission (downlink) are active simultaneously.
+
 ## Why Cloudflare SFU?
 
 Traditional P2P WebRTC requires NAT traversal which fails in many scenarios:

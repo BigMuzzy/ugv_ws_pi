@@ -564,7 +564,7 @@ function disableControls() {
 
 // Rate limiting for DataChannel
 let lastSendTime = 0;
-const MIN_SEND_INTERVAL_MS = 50;  // 50ms = 20Hz max rate
+const MIN_SEND_INTERVAL_MS = 100;  // 100ms = 10Hz max rate (throttled to reduce DataChannel load)
 const MAX_BUFFER_SIZE = 65536;     // 64KB buffer threshold
 let droppedMessages = 0;
 
