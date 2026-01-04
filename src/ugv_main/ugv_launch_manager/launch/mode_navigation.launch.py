@@ -10,12 +10,18 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import SetParameter
 from ament_index_python.packages import get_package_share_directory
 
 
 def generate_launch_description():
     # Declare arguments (same as nav.launch.py expects)
     declared_arguments = [
+        DeclareLaunchArgument(
+            'use_sim_time',
+            default_value='false',
+            description='Use simulation clock (/clock)'
+        ),
         DeclareLaunchArgument(
             'map_path',
             default_value='/home/ws/ugv_ws/maps/second_floor.yaml',
@@ -56,6 +62,7 @@ def generate_launch_description():
 
     return LaunchDescription(
         declared_arguments + [
+            SetParameter(name='use_sim_time', value=LaunchConfiguration('use_sim_time')),
             nav_launch,
         ]
     )

@@ -4,11 +4,13 @@ Launch Process Manager
 Manages subprocess lifecycle for ROS2 launch files
 """
 
-import subprocess
-import signal
-import time
 import os
-from typing import Optional, Dict, List
+import signal
+import subprocess
+import tempfile
+import time
+import threading
+from typing import Optional, Dict
 
 
 class LaunchProcessManager:
@@ -20,6 +22,38 @@ class LaunchProcessManager:
         self.active_process: Optional[subprocess.Popen] = None
         self.current_mode: str = 'idle'
         self.process_start_time: Optional[float] = None
+        self.last_log_path: Optional[str] = None
+        self._output_thread: Optional[threading.Thread] = None
+
+    def _get_popen_kwargs(self) -> Dict:
+        """Return platform-appropriate kwargs for Popen process group handling."""
+        if os.name == 'nt':
+            # Allows sending CTRL_BREAK_EVENT to the process group.
+            return {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP}
+        return {'start_new_session': True}
+
+    def _make_log_path(self, package: str, launch_file: str) -> str:
+        safe_name = f"{package}__{launch_file}".replace(os.sep, '_').replace(':', '_')
+        log_dir = os.path.join(tempfile.gettempdir(), 'ugv_launch_manager')
+        os.makedirs(log_dir, exist_ok=True)
+        return os.path.join(log_dir, f"{safe_name}.log")
+
+    def _tee_subprocess_output(self, log_path: str):
+        """Continuously drain child stdout to avoid deadlocks and persist output."""
+        proc = self.active_process
+        if not proc or not proc.stdout:
+            return
+
+        try:
+            with open(log_path, 'a', encoding='utf-8', errors='replace') as log_file:
+                for line in proc.stdout:
+                    # Keep console output for debug mode.
+                    print(line, end='')
+                    log_file.write(line)
+                    log_file.flush()
+        except Exception:
+            # Best-effort output capture; avoid crashing the manager.
+            return
 
     def start_launch(self, package: str, launch_file: str,
                     arguments: Optional[Dict[str, str]] = None) -> bool:
@@ -53,23 +87,39 @@ class LaunchProcessManager:
             env = os.environ.copy()
             env['PYTHONUNBUFFERED'] = '1'  # Ensure real-time output
 
+            popen_kwargs = self._get_popen_kwargs()
+
+            # Always keep a log file path so failures are diagnosable.
+            self.last_log_path = self._make_log_path(package, launch_file)
+
             # Start process
-            # In debug mode, show output to console; otherwise silence to avoid buffer deadlock
+            # In debug mode, tee output to console and file (avoid PIPE buffer deadlocks).
             if self.debug:
                 self.active_process = subprocess.Popen(
                     cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
                     env=env,
-                    preexec_fn=os.setsid  # Create new process group
+                    **popen_kwargs,
                 )
+
+                self._output_thread = threading.Thread(
+                    target=self._tee_subprocess_output,
+                    args=(self.last_log_path,),
+                    daemon=True,
+                )
+                self._output_thread.start()
             else:
-                # Output goes to /dev/null to prevent terminal spam and buffer deadlock
-                self.active_process = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    env=env,
-                    preexec_fn=os.setsid  # Create new process group
-                )
+                with open(self.last_log_path, 'ab', buffering=0) as log_file:
+                    self.active_process = subprocess.Popen(
+                        cmd,
+                        stdout=log_file,
+                        stderr=log_file,
+                        env=env,
+                        **popen_kwargs,
+                    )
 
             self.process_start_time = time.time()
 
@@ -80,10 +130,12 @@ class LaunchProcessManager:
                 # Process already died
                 if self.logger:
                     self.logger.error(f"Launch process died immediately with code {self.active_process.returncode}")
+                    self.logger.error(f"See log: {self.last_log_path}")
                 return False
 
             if self.logger:
                 self.logger.info(f"Launch process started successfully (PID: {self.active_process.pid})")
+                self.logger.info(f"Logging to: {self.last_log_path}")
 
             return True
 
@@ -115,11 +167,15 @@ class LaunchProcessManager:
             if self.logger:
                 self.logger.info(f"Stopping launch process (PID: {pid})...")
 
-            # Send SIGINT to process group (like Ctrl+C)
+            # Politely request shutdown
             try:
-                os.killpg(os.getpgid(pid), signal.SIGINT)
-            except ProcessLookupError:
-                # Process already dead
+                if os.name == 'nt':
+                    # Best-effort Ctrl+Break to the new process group.
+                    self.active_process.send_signal(signal.CTRL_BREAK_EVENT)
+                else:
+                    os.killpg(os.getpgid(pid), signal.SIGINT)
+            except (ProcessLookupError, AttributeError):
+                # Process already dead or signal not supported
                 self.active_process = None
                 return True
 
@@ -130,6 +186,7 @@ class LaunchProcessManager:
                     if self.logger:
                         self.logger.info("Launch process stopped gracefully")
                     self.active_process = None
+                    self._output_thread = None
                     return True
                 time.sleep(0.5)
 
@@ -138,11 +195,15 @@ class LaunchProcessManager:
                 self.logger.warn(f"Force killing process (PID: {pid})...")
 
             try:
-                os.killpg(os.getpgid(pid), signal.SIGKILL)
+                if os.name == 'nt':
+                    self.active_process.kill()
+                else:
+                    os.killpg(os.getpgid(pid), signal.SIGKILL)
             except ProcessLookupError:
                 pass
 
             self.active_process = None
+            self._output_thread = None
             return True
 
         except Exception as e:
