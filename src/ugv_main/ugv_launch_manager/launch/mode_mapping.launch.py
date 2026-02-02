@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Mapping Mode Launch File
-Launches SLAM system with gmapping
-Reproduces: ros2 launch ugv_slam gmapping.launch.py use_rviz:=false
+Launches SLAM system with SLAM Toolbox
+Reproduces: ros2 launch ugv_slam slam_toolbox.launch.py use_rviz:=false
 """
 
 import os
@@ -15,7 +15,7 @@ from ament_index_python.packages import get_package_share_directory
 
 
 def generate_launch_description():
-    # Declare arguments (same as gmapping.launch.py expects)
+    # Declare arguments
     declared_arguments = [
         DeclareLaunchArgument(
             'map_path',
@@ -32,10 +32,10 @@ def generate_launch_description():
     # Get package directory
     ugv_slam_dir = get_package_share_directory('ugv_slam')
 
-    # SLAM launch - directly include gmapping.launch.py
+    # SLAM launch - include slam_toolbox.launch.py instead of gmapping
     slam_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(ugv_slam_dir, 'launch', 'gmapping.launch.py')
+            os.path.join(ugv_slam_dir, 'launch', 'slam_toolbox.launch.py')
         ),
         launch_arguments={
             'use_rviz': LaunchConfiguration('use_rviz'),

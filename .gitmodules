@@ -1,0 +1,3 @@
+[submodule "src/ugv_main/.rss-repo"]
+	path = src/ugv_main/.rss-repo
+	url = git@ssh.dev.azure.com:v3/paperbits/Paperbits/robotic-security-systems
