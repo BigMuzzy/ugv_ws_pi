@@ -45,7 +45,7 @@ CLaserOdometry2DNode::CLaserOdometry2DNode(): Node("CLaserOdometry2DNode")
   // Init Publishers and Subscribers
   //---------------------------------
   buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
-  tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*buffer_);
+  tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*buffer_, this, false);
   odom_broadcaster = std::make_unique<tf2_ros::TransformBroadcaster>(this);
   odom_pub  = this->create_publisher<nav_msgs::msg::Odometry>(odom_topic, 5);
   imu_pub  = this->create_publisher<sensor_msgs::msg::Imu>(imu_topic, 5);
@@ -183,7 +183,7 @@ void CLaserOdometry2DNode::process()
       if (!warning_issued)
       {
           RCLCPP_WARN(get_logger(), "Waiting for laser_scans....");
-          warning_issued = true; // ÉèÖÃ¾¯¸æ±êÖ¾
+          warning_issued = true; // ï¿½ï¿½ï¿½Ã¾ï¿½ï¿½ï¿½ï¿½Ö¾
       }
   }
 }
