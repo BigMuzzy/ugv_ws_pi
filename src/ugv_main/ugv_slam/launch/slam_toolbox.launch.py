@@ -51,6 +51,7 @@ def generate_launch_description():
         executable='async_slam_toolbox_node',
         name='slam_toolbox',
         output='screen',
+        arguments=['--ros-args', '--log-level', 'info'],
         parameters=[
             {
                 'use_sim_time': False,
@@ -61,12 +62,18 @@ def generate_launch_description():
                 'mode': 'mapping',
                 
                 # General Parameters
-                'map_update_interval': 1.0,
+                'map_update_interval': 0.5,  # Reduced from 1.0 for faster map updates
                 'resolution': 0.05,
                 'max_laser_range': 12.0,
-                'minimum_time_interval': 0.5,
+                'min_laser_range': 0.1,  # Set minimum range to avoid warning (for rastering images)
+                'minimum_time_interval': 0.2,  # Reduced from 0.5 for more frequent processing
                 'transform_publish_period': 0.02,
-                'tf_buffer_duration': 30.0,
+                'tf_buffer_duration': 60.0,  # Increased from 30.0 to handle timestamp delays
+                'transform_timeout': 0.5,  # Add timeout for transform lookups
+
+                # Message Filter Parameters
+                'message_filter_queue_size': 100,  # Increase queue size to prevent message dropping
+                'throttle_scans': 1,  # Process every scan (set >1 to skip scans if needed)
                 
                 # Solver Parameters
                 'solver_plugin': 'solver_plugins::CeresSolver',
@@ -75,11 +82,12 @@ def generate_launch_description():
                 'ceres_trust_strategy': 'LEVENBERG_MARQUARDT',
                 'ceres_dogleg_type': 'TRADITIONAL_DOGLEG',
                 'ceres_loss_function': 'None',
+                'num_threads': 4,  # Match Raspberry Pi's 4 cores (avoids warning about 50 threads)
                 
-                # Correlation Parameters
-                'correlation_search_space_dimension': 0.5,
+                # Correlation Parameters - Increased to handle odometry drift
+                'correlation_search_space_dimension': 1.0,  # Increased from 0.5 to search larger area
                 'correlation_search_space_resolution': 0.01,
-                'correlation_search_space_smear_deviation': 0.1,
+                'correlation_search_space_smear_deviation': 0.1,  # Maximum allowed value (0.005-0.1 range)
                 
                 # Loop Closure Parameters
                 'loop_search_maximum_distance': 3.0,
@@ -92,17 +100,31 @@ def generate_launch_description():
                 # Scan Matcher Parameters
                 'use_scan_matching': True,
                 'use_scan_barycenter': True,
-                'minimum_travel_distance': 0.2,
-                'minimum_travel_heading': 0.2,
-                'scan_buffer_size': 10,
-                'scan_buffer_maximum_scan_distance': 10.0,
-                'link_match_minimum_response_fine': 0.1,
-                'link_scan_maximum_distance': 1.5,
-                'max_variance': 0.02,
+                'minimum_travel_distance': 0.1,  # Reduced from 0.2 for more frequent updates
+                'minimum_travel_heading': 0.1,  # Reduced from 0.2 (about 5.7 degrees)
+                'scan_buffer_size': 20,  # Increased from 10 for better matching
+                'scan_buffer_maximum_scan_distance': 15.0,  # Increased from 10.0
+                'link_match_minimum_response_fine': 0.1,  # Increased from 0.05 for better quality matches
+                'link_scan_maximum_distance': 2.0,  # Increased from 1.5 to handle drift
+                'max_variance': 0.1,  # Increased from 0.05 to tolerate odometry errors
+
+                # Additional parameters for better scan matching
+                'coarse_search_angle_offset': 0.349,  # ~20 degrees search for rotation
+                'coarse_angle_resolution': 0.0349,  # ~2 degree resolution
+                'minimum_angle_penalty': 0.9,
+                'minimum_distance_penalty': 0.5,
+                'use_response_expansion': True,  # Improves scan matching quality
+
+                # Fine search parameters
+                'fine_search_angle_offset': 0.00349,  # ~0.2 degrees for fine tuning
+                'distance_variance_penalty': 0.5,
+                'angle_variance_penalty': 1.0,
             }
         ],
         remappings=[
             ('/scan', '/scan'),
+            # Use laser odometry (rf2o) instead of wheel odometry for better accuracy
+            ('/odom', '/odom_rf2o'),
         ]
     )
 

@@ -59,16 +59,26 @@ class BaseController:
     # Function to read and return feedback data from the serial input
     def feedback_data(self):
         try:
-            line = self.rl.readline().decode('utf-8')  # Read line from UART
+            line = self.rl.readline().decode('utf-8').strip()  # Read line from UART and strip whitespace
+            if not line:  # Skip empty lines
+                return self.base_data
             self.data_buffer = json.loads(line)  # Parse JSON data
             self.base_data = self.data_buffer  # Store received data
             return self.base_data  # Return base data
         except json.JSONDecodeError as e:
-            self.logger.error(f"JSON decode error: {e} with line: {line}")  # Log error
+            # Only log if we have substantial data (ignore partial fragments)
+            if len(line) > 10:
+                self.logger.error(f"JSON decode error: {e} with line: {line}")
             self.rl.clear_buffer()  # Clear buffer on error
+            return self.base_data  # Return last known good data
+        except UnicodeDecodeError as e:
+            self.logger.error(f"Unicode decode error: {e}")
+            self.rl.clear_buffer()
+            return self.base_data
         except Exception as e:
             self.logger.error(f"[base_ctrl.feedback_data] unexpected error: {e}")
             self.rl.clear_buffer()
+            return self.base_data
 
     # Receive and decode data from the serial connection
     def on_data_received(self):

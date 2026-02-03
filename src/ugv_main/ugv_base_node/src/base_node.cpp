@@ -126,17 +126,19 @@ private:
     // Callback to handle raw odometry data and update position/velocity
     void handle_odom(const std::shared_ptr<std_msgs::msg::Float32MultiArray> msg)
     {
-        rclcpp::Time curren_time = rclcpp::Clock().now();
+        rclcpp::Time curren_time = this->now();  // Use node clock for consistency
 
         float now_odl = msg->data.at(0);  // Left wheel odometry
         float now_odr = msg->data.at(1);  // Right wheel odometry
 
-        // Initialize encoders if it's the first callback
+        // Initialize encoders and time if it's the first callback
         if (!is_initialized)
         {
             init_odl = now_odl;
             init_odr = now_odr;
+            last_time_ = curren_time;  // Initialize last_time_ with node clock
             is_initialized = true;
+            return;  // Skip first iteration to avoid zero dt
         }
 
         // Adjust odometry readings by subtracting the initial values
@@ -189,7 +191,8 @@ private:
         auto trans = geometry_msgs::msg::TransformStamped();
 
         // Set the header information
-        odom.header.stamp = rclcpp::Clock().now();
+        rclcpp::Time current_time = this->now();  // Use node clock for consistency
+        odom.header.stamp = current_time;
         odom.header.frame_id = odom_frame;
         odom.child_frame_id = base_footprint_frame;
 
@@ -223,7 +226,7 @@ private:
         // If enabled, broadcast the transformation
         if (pub_odom_tf_)
         {
-            trans.header.stamp = rclcpp::Clock().now();
+            trans.header.stamp = current_time;  // Use same timestamp as odometry
             trans.header.frame_id = odom_frame;
             trans.child_frame_id = base_footprint_frame;
 
