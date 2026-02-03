@@ -36,6 +36,16 @@ def generate_launch_description():
         'localization', default_value='false',
         description='Launch in localization mode.'
     )
+    
+    declare_use_rviz = DeclareLaunchArgument(
+        'use_rviz', default_value='false',
+        description='Whether to launch RViz2'
+    )
+    
+    declare_include_bringup = DeclareLaunchArgument(
+        'include_bringup', default_value='true',
+        description='Whether to include bringup_lidar (set false if hardware already running)'
+    )
                             
     # Parameters for the SLAM node
     parameters = {
@@ -62,7 +72,8 @@ def generate_launch_description():
         launch_arguments={
             'use_rviz': LaunchConfiguration('use_rviz'),
             'rviz_config': 'slam_3d',
-        }.items()
+        }.items(),
+        condition=IfCondition(LaunchConfiguration('include_bringup'))
     )
         
     # Launch the oak lite bringup launch file
@@ -112,6 +123,8 @@ def generate_launch_description():
         declare_queue_size,
         declare_qos,
         declare_localization,
+        declare_use_rviz,
+        declare_include_bringup,
         bringup_lidar_launch,
         bringup_oak_lite_launch,
         robot_pose_publisher_launch,

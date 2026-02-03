@@ -87,12 +87,21 @@ def generate_launch_description():
         'log_level', default_value='info',
         description='log level')
     
+    declare_include_bringup_cmd = DeclareLaunchArgument(
+        'include_bringup', default_value='true',
+        description='Whether to include bringup_lidar (set false if hardware already running)')
+    
+    declare_use_rviz_cmd = DeclareLaunchArgument(
+        'use_rviz', default_value='false',
+        description='Whether to launch RViz2')
+    
     bringup_lidar_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(get_package_share_directory('ugv_bringup'), 'launch', 'bringup_lidar.launch.py')),
         launch_arguments={
             'use_rviz': LaunchConfiguration('use_rviz'),
             'rviz_config': 'nav_2d',  
-        }.items()
+        }.items(),
+        condition=IfCondition(LaunchConfiguration('include_bringup'))
     )
     
     robot_pose_publisher_launch = IncludeLaunchDescription(PythonLaunchDescriptionSource(
@@ -151,6 +160,8 @@ def generate_launch_description():
     ld.add_action(declare_use_composition_cmd)
     ld.add_action(declare_use_respawn_cmd)
     ld.add_action(declare_log_level_cmd)
+    ld.add_action(declare_include_bringup_cmd)
+    ld.add_action(declare_use_rviz_cmd)
 
     # Add the actions to launch all of the navigation nodes
     ld.add_action(bringup_lidar_launch)

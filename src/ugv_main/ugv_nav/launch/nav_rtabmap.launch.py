@@ -56,6 +56,10 @@ def launch_setup(context, *args, **kwargs):
     # Declare the use_rviz launch argument
     use_rviz_arg = DeclareLaunchArgument('use_rviz', default_value='false',
                                      description='Whether to launch RViz2')  
+    
+    # Declare the include_bringup launch argument
+    include_bringup_arg = DeclareLaunchArgument('include_bringup', default_value='true',
+                                     description='Whether to include bringup_lidar (set false if hardware already running)')
 
     # Include the bringup lidar launch description
     bringup_lidar_launch = IncludeLaunchDescription(PythonLaunchDescriptionSource(
@@ -64,7 +68,8 @@ def launch_setup(context, *args, **kwargs):
         launch_arguments={
             'use_rviz': LaunchConfiguration('use_rviz'),
             'rviz_config': 'nav_3d',
-        }.items()
+        }.items(),
+        condition=IfCondition(LaunchConfiguration('include_bringup'))
     )
                                          
     # Include the robot pose publisher launch description
@@ -76,6 +81,7 @@ def launch_setup(context, *args, **kwargs):
     # Return the launch actions
     return [
         use_rviz_arg,
+        include_bringup_arg,
         bringup_lidar_launch,
         robot_pose_publisher_launch,
         nav2_bringup_launch

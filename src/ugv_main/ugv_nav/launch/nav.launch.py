@@ -9,6 +9,19 @@ from launch.conditions import IfCondition, UnlessCondition, LaunchConfigurationE
 from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 
+# Conditionally include bringup_lidar based on launch argument
+def get_bringup_lidar_launch(context):
+    include_bringup = context.launch_configurations.get('include_bringup', 'true').lower()
+    if include_bringup == 'true':
+        return IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(os.path.join(get_package_share_directory('ugv_bringup'), 'launch', 'bringup_lidar.launch.py')),
+            launch_arguments={
+                'use_rviz': context.launch_configurations.get('use_rviz', 'false'),
+                'rviz_config': 'nav_2d',
+            }.items()
+        )
+    return None
+
 # Function to get the localplan config file based on the launch configuration
 def get_localplan_config_file(context):
     # Get the use_localplan and use_localization launch configurations
@@ -53,14 +66,8 @@ def launch_setup(context, *args, **kwargs):
     map_yaml_path = LaunchConfiguration('map', default=os.path.join(ugv_nav_dir, 'maps', 'map.yaml'))
     # Get the emcl param file
     emcl_param_file = os.path.join(emcl_dir, 'config', 'emcl2_quick_start.param.yaml')                        
-    # Include the bringup_lidar launch description
-    bringup_lidar_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(os.path.join(get_package_share_directory('ugv_bringup'), 'launch', 'bringup_lidar.launch.py')),
-        launch_arguments={
-            'use_rviz': LaunchConfiguration('use_rviz'),
-            'rviz_config': 'nav_2d', 
-        }.items()
-    )
+    # Conditionally include the bringup_lidar launch description
+    bringup_lidar_launch = get_bringup_lidar_launch(context)
 
     # Include the nav2_bringup_amcl launch description if use_localization is amcl
     nav2_bringup_amcl_launch = IncludeLaunchDescription(
@@ -106,8 +113,8 @@ def launch_setup(context, *args, **kwargs):
          '/robot_pose_publisher_launch.py'])
     ) 
     
-    # Return the list of launch descriptions
-    return [
+    # Return the list of launch descriptions (filter out None values)
+    actions = [
         bringup_lidar_launch,
         nav2_bringup_amcl_launch,
         nav2_bringup_emcl_launch,
@@ -115,6 +122,7 @@ def launch_setup(context, *args, **kwargs):
         robot_pose_publisher_launch,
         nav2_bringup_cartographer_launch
     ]
+    return [a for a in actions if a is not None]
 
 # Function to generate the launch description
 def generate_launch_description():
@@ -122,6 +130,9 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('use_localplan', default_value='teb', description='Choose which localplan to use: dwa,teb'),
         DeclareLaunchArgument('use_localization', default_value='amcl', description='Choose which use_localization to use: amcl,cartographer'),
+        DeclareLaunchArgument('include_bringup', default_value='true', description='Whether to include bringup_lidar (set false if hardware already running)'),
+        DeclareLaunchArgument('use_rviz', default_value='false', description='Whether to launch RViz2'),
+        DeclareLaunchArgument('map', default_value='', description='Path to map yaml file'),
         OpaqueFunction(function=launch_setup)
     ])
 

@@ -9,6 +9,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
+from launch.conditions import IfCondition
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 
@@ -19,6 +20,13 @@ def generate_launch_description():
         'use_rviz', 
         default_value='false',
         description='Whether to launch RViz2'
+    )
+    
+    # Declare launch argument for whether to include bringup_lidar
+    include_bringup_arg = DeclareLaunchArgument(
+        'include_bringup',
+        default_value='true',
+        description='Whether to include bringup_lidar (set false if hardware already running)'
     )
     
     # Include launch description for bringup_lidar.launch.py
@@ -33,7 +41,8 @@ def generate_launch_description():
         launch_arguments={
             'use_rviz': LaunchConfiguration('use_rviz'),
             'rviz_config': 'slam_2d',
-        }.items()
+        }.items(),
+        condition=IfCondition(LaunchConfiguration('include_bringup'))
     )
     
     # SLAM Toolbox node with online async SLAM mode
@@ -111,6 +120,7 @@ def generate_launch_description():
     # Return launch description
     return LaunchDescription([
         use_rviz_arg,
+        include_bringup_arg,
         bringup_lidar_launch,
         robot_pose_publisher_launch,
         slam_toolbox_node,
