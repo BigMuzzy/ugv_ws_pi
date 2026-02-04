@@ -6,11 +6,17 @@ Provides ROS2 services to dynamically switch between operational modes
 Architecture:
 - Background processes (always running): motors, LIDAR, TF, rosbridge, webrtc
 - Mode processes (switched): SLAM (mapping) or Nav2 (navigation)
+
+Hybrid shutdown approach:
+- Nav2: Uses lifecycle_manager for graceful shutdown, then process kill
+- SLAM: Uses process kill (SIGINT)
 """
 
 import rclpy
 from rclpy.node import Node
+from rclpy.callback_groups import ReentrantCallbackGroup
 from ugv_interface.srv import SwitchMode, GetMode, StopAll, MapSave, ListMaps
+from nav2_msgs.srv import ManageLifecycleNodes
 from ament_index_python.packages import get_package_share_directory
 import os
 import signal
@@ -39,6 +45,9 @@ class LaunchManagerNode(Node):
         if self.debug_mode:
             self.get_logger().info("DEBUG MODE ENABLED - All subprocess output will be shown")
 
+        # Callback group for service clients (allows nested service calls)
+        self.callback_group = ReentrantCallbackGroup()
+
         # Process manager for mode switching
         self.process_mgr = LaunchProcessManager(
             logger=self.get_logger(),
@@ -47,6 +56,9 @@ class LaunchManagerNode(Node):
 
         # Store current mode arguments for cleanup operations
         self.current_mode_arguments = {}
+
+        # Nav2 lifecycle manager client (created lazily when needed)
+        self.nav2_lifecycle_client = None
 
         # Start persistent background processes
         self.background_process = None
@@ -188,6 +200,68 @@ class LaunchManagerNode(Node):
                 self.get_logger().error(f"Error stopping background processes: {e}")
             finally:
                 self.background_process = None
+
+    def shutdown_nav2_lifecycle(self, timeout: float = 5.0) -> bool:
+        """
+        Gracefully shutdown Nav2 nodes using the lifecycle_manager service.
+        
+        This sends a SHUTDOWN command to Nav2's lifecycle_manager which will
+        transition all managed nodes through their lifecycle states cleanly.
+        
+        Args:
+            timeout: Seconds to wait for the service call
+            
+        Returns:
+            True if shutdown was successful, False otherwise
+        """
+        try:
+            # Create client if not exists
+            if self.nav2_lifecycle_client is None:
+                self.nav2_lifecycle_client = self.create_client(
+                    ManageLifecycleNodes,
+                    '/lifecycle_manager_navigation/manage_nodes',
+                    callback_group=self.callback_group
+                )
+            
+            # Check if service is available
+            if not self.nav2_lifecycle_client.wait_for_service(timeout_sec=2.0):
+                self.get_logger().warn(
+                    "Nav2 lifecycle_manager service not available, "
+                    "falling back to process kill"
+                )
+                return False
+            
+            self.get_logger().info("Sending SHUTDOWN command to Nav2 lifecycle_manager...")
+            
+            # Create request with SHUTDOWN command (command=3)
+            request = ManageLifecycleNodes.Request()
+            request.command = ManageLifecycleNodes.Request.SHUTDOWN  # 3
+            
+            # Call service synchronously
+            future = self.nav2_lifecycle_client.call_async(request)
+            
+            # Wait for result with timeout
+            start_time = self.get_clock().now()
+            while not future.done():
+                rclpy.spin_once(self, timeout_sec=0.1)
+                elapsed = (self.get_clock().now() - start_time).nanoseconds / 1e9
+                if elapsed > timeout:
+                    self.get_logger().warn(
+                        f"Nav2 lifecycle shutdown timed out after {timeout}s"
+                    )
+                    return False
+            
+            result = future.result()
+            if result.success:
+                self.get_logger().info("Nav2 lifecycle shutdown completed successfully")
+                return True
+            else:
+                self.get_logger().warn("Nav2 lifecycle shutdown returned failure")
+                return False
+                
+        except Exception as e:
+            self.get_logger().warn(f"Error during Nav2 lifecycle shutdown: {e}")
+            return False
 
     def start_rosbridge(self):
         """Start ROSBridge WebSocket server in background"""
@@ -377,7 +451,12 @@ class LaunchManagerNode(Node):
         }
 
     def switch_mode_callback(self, request, response):
-        """Handle mode switch requests between mapping and navigation"""
+        """Handle mode switch requests between mapping and navigation
+        
+        Hybrid shutdown approach:
+        - Navigation mode: Uses Nav2 lifecycle_manager for graceful shutdown first
+        - Mapping mode: Uses process kill (SIGINT)
+        """
         requested_mode = request.mode
         previous_mode = self.process_mgr.current_mode
 
@@ -395,6 +474,18 @@ class LaunchManagerNode(Node):
         # Stop current mode if active (SLAM or Nav2)
         if self.process_mgr.is_active():
             self.get_logger().info(f"Stopping current mode: {previous_mode}")
+            
+            # Hybrid approach: Use lifecycle shutdown for Nav2, process kill for SLAM
+            if previous_mode == 'navigation':
+                # Gracefully shutdown Nav2 via lifecycle_manager first
+                self.get_logger().info("Using Nav2 lifecycle manager for graceful shutdown...")
+                lifecycle_success = self.shutdown_nav2_lifecycle(timeout=5.0)
+                if lifecycle_success:
+                    self.get_logger().info("Nav2 lifecycle shutdown successful, cleaning up process...")
+                else:
+                    self.get_logger().warn("Nav2 lifecycle shutdown failed, falling back to process kill")
+            
+            # Always call stop_launch to clean up the process
             if not self.process_mgr.stop_launch():
                 response.success = False
                 response.message = "Failed to stop current mode"
@@ -484,6 +575,13 @@ class LaunchManagerNode(Node):
         # Stop current mode process
         if request.stop_mode:
             if self.process_mgr.is_active():
+                current_mode = self.process_mgr.current_mode
+                
+                # Hybrid approach: Use lifecycle shutdown for Nav2
+                if current_mode == 'navigation':
+                    self.get_logger().info("Using Nav2 lifecycle manager for graceful shutdown...")
+                    self.shutdown_nav2_lifecycle(timeout=5.0)
+                
                 if self.process_mgr.stop_launch():
                     self.process_mgr.set_mode('none')
                     self.current_mode_arguments = {}
