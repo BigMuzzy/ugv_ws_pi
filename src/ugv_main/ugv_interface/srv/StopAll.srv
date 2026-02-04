@@ -1,7 +1,8 @@
 # Request
-bool stop_mode         # Stop the current mode process
+bool stop_mode         # Stop the current mode process (SLAM or Nav2)
 bool stop_webrtc       # Stop the WebRTC bridge
 bool stop_rosbridge    # Stop the ROSBridge server
+bool stop_background   # Stop background processes (motors, LIDAR, TF)
 ---
 # Response
 bool success

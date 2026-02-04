@@ -2,6 +2,10 @@
 """
 Launch Manager Node
 Provides ROS2 services to dynamically switch between operational modes
+
+Architecture:
+- Background processes (always running): motors, LIDAR, TF, rosbridge, webrtc
+- Mode processes (switched): SLAM (mapping) or Nav2 (navigation)
 """
 
 import rclpy
@@ -25,7 +29,7 @@ class LaunchManagerNode(Node):
         self.get_logger().info("Initializing Launch Manager Node...")
 
         # Declare and get default_mode parameter
-        self.declare_parameter('default_mode', 'idle')
+        self.declare_parameter('default_mode', 'none')
         default_mode = self.get_parameter('default_mode').value
 
         # Declare and get debug parameter
@@ -35,7 +39,7 @@ class LaunchManagerNode(Node):
         if self.debug_mode:
             self.get_logger().info("DEBUG MODE ENABLED - All subprocess output will be shown")
 
-        # Process manager
+        # Process manager for mode switching
         self.process_mgr = LaunchProcessManager(
             logger=self.get_logger(),
             debug=self.debug_mode
@@ -45,8 +49,12 @@ class LaunchManagerNode(Node):
         self.current_mode_arguments = {}
 
         # Start persistent background processes
+        self.background_process = None
         self.webrtc_bridge_process = None
         self.rosbridge_process = None
+        
+        # Start background processes (motors, LIDAR, TF)
+        self.start_background()
         self.start_webrtc_bridge()
         self.start_rosbridge()
 
@@ -123,6 +131,63 @@ class LaunchManagerNode(Node):
             # Mode with no launch file (basic idle)
             self.process_mgr.set_mode(mode)
             self.get_logger().info(f"Set to {mode} mode (no process)")
+
+    def start_background(self):
+        """Start background processes (motors, LIDAR, TF) that persist across mode switches"""
+        try:
+            self.get_logger().info("Starting background processes (motors, LIDAR, TF)...")
+
+            # In debug mode, show output; otherwise silence it
+            if self.debug_mode:
+                self.background_process = subprocess.Popen(
+                    [
+                        'ros2', 'launch', 'ugv_launch_manager', 'background.launch.py'
+                    ],
+                    start_new_session=True
+                )
+            else:
+                self.background_process = subprocess.Popen(
+                    [
+                        'ros2', 'launch', 'ugv_launch_manager', 'background.launch.py'
+                    ],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True
+                )
+            self.get_logger().info(
+                f"Background processes started with PID: {self.background_process.pid}"
+            )
+        except Exception as e:
+            self.get_logger().error(f"Failed to start background processes: {e}")
+            self.background_process = None
+
+    def stop_background(self):
+        """Stop background processes (motors, LIDAR, TF)"""
+        if self.background_process:
+            try:
+                pid = self.background_process.pid
+                self.get_logger().info(f"Stopping background processes (PID: {pid})...")
+
+                # Kill the entire process group
+                try:
+                    os.killpg(os.getpgid(pid), signal.SIGTERM)
+                except ProcessLookupError:
+                    return  # Already dead
+
+                try:
+                    self.background_process.wait(timeout=10)
+                    self.get_logger().info("Background processes terminated cleanly")
+                except subprocess.TimeoutExpired:
+                    self.get_logger().warn("Background processes did not terminate, force killing...")
+                    try:
+                        os.killpg(os.getpgid(pid), signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    self.background_process.wait()
+            except Exception as e:
+                self.get_logger().error(f"Error stopping background processes: {e}")
+            finally:
+                self.background_process = None
 
     def start_rosbridge(self):
         """Start ROSBridge WebSocket server in background"""
@@ -294,13 +359,8 @@ class LaunchManagerNode(Node):
             return self.get_default_modes()
 
     def get_default_modes(self) -> dict:
-        """Get default mode configurations"""
+        """Get default mode configurations (fallback if modes.yaml fails to load)"""
         return {
-            'idle': {
-                'launch_package': 'ugv_vision',
-                'launch_file': 'oak_d_lite.launch.py',
-                'description': 'Camera only mode'
-            },
             'mapping': {
                 'launch_package': 'ugv_launch_manager',
                 'launch_file': 'mode_mapping.launch.py',
@@ -310,14 +370,14 @@ class LaunchManagerNode(Node):
                 'launch_package': 'ugv_launch_manager',
                 'launch_file': 'mode_navigation.launch.py',
                 'arguments': {
-                    'map': '/home/ws/ugv_ws/maps/second_floor.yaml'
+                    'map_path': '/home/ws/ugv_ws/maps/second_floor.yaml'
                 },
-                'description': 'Navigation with AMCL'
+                'description': 'Navigation with Nav2'
             }
         }
 
     def switch_mode_callback(self, request, response):
-        """Handle mode switch requests"""
+        """Handle mode switch requests between mapping and navigation"""
         requested_mode = request.mode
         previous_mode = self.process_mgr.current_mode
 
@@ -332,7 +392,7 @@ class LaunchManagerNode(Node):
             self.get_logger().error(response.message)
             return response
 
-        # Stop current mode if active
+        # Stop current mode if active (SLAM or Nav2)
         if self.process_mgr.is_active():
             self.get_logger().info(f"Stopping current mode: {previous_mode}")
             if not self.process_mgr.stop_launch():
@@ -342,51 +402,41 @@ class LaunchManagerNode(Node):
                 response.current_mode = previous_mode
                 return response
 
-        # Start new mode (unless it's 'idle' with no process)
+        # Start new mode
         mode_config = self.modes[requested_mode]
+        self.get_logger().info(f"Starting new mode: {requested_mode}")
 
-        if requested_mode != 'idle' or 'launch_package' in mode_config:
-            self.get_logger().info(f"Starting new mode: {requested_mode}")
+        package = mode_config['launch_package']
+        launch_file = mode_config['launch_file']
+        arguments = mode_config.get('arguments', {}).copy()
 
-            package = mode_config['launch_package']
-            launch_file = mode_config['launch_file']
-            arguments = mode_config.get('arguments', {}).copy()
+        # Merge service call arguments with defaults from config
+        if hasattr(request, 'arg_names') and hasattr(request, 'arg_values'):
+            if len(request.arg_names) == len(request.arg_values):
+                for name, value in zip(request.arg_names, request.arg_values):
+                    arguments[name] = value
+                    self.get_logger().info(f"Override argument: {name}={value}")
+            elif len(request.arg_names) > 0 or len(request.arg_values) > 0:
+                self.get_logger().warn(
+                    f"Mismatched arg_names and arg_values lengths, ignoring custom arguments"
+                )
 
-            # Merge service call arguments with defaults from config
-            if hasattr(request, 'arg_names') and hasattr(request, 'arg_values'):
-                if len(request.arg_names) == len(request.arg_values):
-                    for name, value in zip(request.arg_names, request.arg_values):
-                        arguments[name] = value
-                        self.get_logger().info(f"Override argument: {name}={value}")
-                elif len(request.arg_names) > 0 or len(request.arg_values) > 0:
-                    self.get_logger().warn(
-                        f"Mismatched arg_names and arg_values lengths, ignoring custom arguments"
-                    )
-
-            if self.process_mgr.start_launch(package, launch_file, arguments):
-                self.process_mgr.set_mode(requested_mode)
-                # Store arguments for cleanup operations (like map saving)
-                self.current_mode_arguments = arguments.copy()
-                response.success = True
-                response.message = f"Successfully switched to {requested_mode} mode"
-                response.previous_mode = previous_mode
-                response.current_mode = requested_mode
-                self.get_logger().info(response.message)
-            else:
-                response.success = False
-                response.message = f"Failed to start {requested_mode} mode"
-                response.previous_mode = previous_mode
-                response.current_mode = previous_mode
-                self.get_logger().error(response.message)
-        else:
-            # Idle mode with no active process
-            self.process_mgr.set_mode('idle')
-            self.current_mode_arguments = {}
+        if self.process_mgr.start_launch(package, launch_file, arguments):
+            self.process_mgr.set_mode(requested_mode)
+            # Store arguments for cleanup operations (like map saving)
+            self.current_mode_arguments = arguments.copy()
             response.success = True
-            response.message = "Switched to idle mode (all systems stopped)"
+            response.message = f"Successfully switched to {requested_mode} mode"
             response.previous_mode = previous_mode
-            response.current_mode = 'idle'
+            response.current_mode = requested_mode
             self.get_logger().info(response.message)
+        else:
+            response.success = False
+            response.message = f"Failed to start {requested_mode} mode"
+            response.previous_mode = previous_mode
+            response.current_mode = previous_mode
+            self.get_logger().error(response.message)
+
 
         return response
 
@@ -410,15 +460,18 @@ class LaunchManagerNode(Node):
     def stop_all_callback(self, request, response):
         """Handle stop all request with selective process stopping"""
         # If no flags are set, stop everything (backwards compatibility)
-        if not (request.stop_mode or request.stop_webrtc or request.stop_rosbridge):
+        if not (request.stop_mode or request.stop_webrtc or request.stop_rosbridge or request.stop_background):
             self.get_logger().info("Stop all requested - no flags set, stopping everything")
             request.stop_mode = True
             request.stop_webrtc = True
             request.stop_rosbridge = True
+            request.stop_background = True
         else:
             flags = []
             if request.stop_mode:
                 flags.append("mode")
+            if request.stop_background:
+                flags.append("background")
             if request.stop_webrtc:
                 flags.append("webrtc")
             if request.stop_rosbridge:
@@ -432,7 +485,7 @@ class LaunchManagerNode(Node):
         if request.stop_mode:
             if self.process_mgr.is_active():
                 if self.process_mgr.stop_launch():
-                    self.process_mgr.set_mode('idle')
+                    self.process_mgr.set_mode('none')
                     self.current_mode_arguments = {}
                     stopped.append("mode processes")
                     self.get_logger().info("Mode processes stopped")
@@ -441,6 +494,16 @@ class LaunchManagerNode(Node):
                     self.get_logger().error("Failed to stop mode processes")
             else:
                 self.get_logger().info("No active mode to stop")
+
+        # Stop background processes (motors, LIDAR, TF)
+        if request.stop_background:
+            try:
+                self.stop_background()
+                stopped.append("background processes")
+            except Exception as e:
+                error_msg = f"Failed to stop background processes: {e}"
+                errors.append(error_msg)
+                self.get_logger().error(error_msg)
 
         # Stop WebRTC bridge
         if request.stop_webrtc:
@@ -591,7 +654,8 @@ def main(args=None):
             node.process_mgr.stop_launch()
 
         # Stop persistent background processes
-        node.get_logger().info("Stopping background services...")
+        node.get_logger().info("Stopping all background services...")
+        node.stop_background()
         node.stop_webrtc_bridge()
         node.stop_rosbridge()
 

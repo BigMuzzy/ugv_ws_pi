@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Navigation Mode Launch File
-Launches navigation stack with AMCL localization
-Reproduces: ros2 launch ugv_nav nav.launch.py use_localization:=amcl use_rviz:=false map:=/home/ws/ugv_ws/maps/second_floor.yaml
+Launches Nav2 stack only - background processes (LIDAR, motors, TF)
+are already running via background.launch.py
 """
 
 import os
@@ -41,7 +41,7 @@ def generate_launch_description():
     # Get package directory
     ugv_nav_dir = get_package_share_directory('ugv_nav')
 
-    # Navigation launch - directly include nav.launch.py with all arguments
+    # Navigation launch - with include_bringup:=false since background handles hardware
     nav_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(ugv_nav_dir, 'launch', 'nav.launch.py')
@@ -51,6 +51,7 @@ def generate_launch_description():
             'use_localplan': LaunchConfiguration('use_localplan'),
             'use_rviz': LaunchConfiguration('use_rviz'),
             'map': LaunchConfiguration('map_path'),
+            'include_bringup': 'false',  # Background already running
         }.items()
     )
 

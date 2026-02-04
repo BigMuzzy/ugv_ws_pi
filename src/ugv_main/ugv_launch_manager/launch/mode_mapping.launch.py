@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Mapping Mode Launch File
-Launches SLAM system with SLAM Toolbox
-Reproduces: ros2 launch ugv_slam slam_toolbox.launch.py use_rviz:=false
+Launches SLAM Toolbox only - background processes (LIDAR, motors, TF) 
+are already running via background.launch.py
 """
 
 import os
@@ -10,7 +10,6 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 
 
@@ -32,13 +31,14 @@ def generate_launch_description():
     # Get package directory
     ugv_slam_dir = get_package_share_directory('ugv_slam')
 
-    # SLAM launch - include slam_toolbox.launch.py instead of gmapping
+    # SLAM launch - with include_bringup:=false since background handles hardware
     slam_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(ugv_slam_dir, 'launch', 'slam_toolbox.launch.py')
         ),
         launch_arguments={
             'use_rviz': LaunchConfiguration('use_rviz'),
+            'include_bringup': 'false',  # Background already running
         }.items()
     )
 
