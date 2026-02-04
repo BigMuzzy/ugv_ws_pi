@@ -11,7 +11,7 @@ WorkingDirectory=/home/ws/ugv_ws
 Environment="CLOUDFLARE_APP_ID=f4e541276741873484e4885e3506c43f"
 Environment="CLOUDFLARE_APP_TOKEN=cce3be972e7f021aef9c044341577974faadb1a872fd97819b23fd0b79e6e875"
 ExecStartPre=/bin/bash -c 'if [ ! "$(docker ps -q -f name=ugv_rpi_ros_humble_new)" ]; then if [ "$(docker ps -aq -f name=ugv_rpi_ros_humble_new)" ]; then docker start ugv_rpi_ros_humble_new; sleep 3; else echo "Error: Container ugv_rpi_ros_humble_new does not exist!" && exit 1; fi; fi'
-ExecStart=/usr/bin/docker exec -e DISPLAY=localhost:10.0 -e UGV_MODEL=ugv_rover -e LDLIDAR_MODEL=ld19 -e CLOUDFLARE_APP_ID=${CLOUDFLARE_APP_ID} -e CLOUDFLARE_APP_TOKEN=${CLOUDFLARE_APP_TOKEN} ugv_rpi_ros_humble_new bash -c "cd /home/ws/ugv_ws && source ./install/setup.bash && ros2 launch ugv_launch_manager manager.launch.py debug:=true"
+ExecStart=/usr/bin/docker exec -e DISPLAY=localhost:10.0 -e UGV_MODEL=ugv_rover -e LDLIDAR_MODEL=ld19 -e CLOUDFLARE_APP_ID=${CLOUDFLARE_APP_ID} -e CLOUDFLARE_APP_TOKEN=${CLOUDFLARE_APP_TOKEN} ugv_rpi_ros_humble_new bash -c "cd /home/ws/ugv_ws && source ./install/setup.bash && ros2 launch ugv_launch_manager manager.launch.py debug:=true default_mode:=navigation"
 ExecStop=/usr/bin/docker exec ugv_rpi_ros_humble_new bash -c "pkill -f 'ugv_launch_manager'"
 Restart=on-failure
 RestartSec=10
