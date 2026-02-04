@@ -10,12 +10,22 @@ Architecture:
 Hybrid shutdown approach:
 - Nav2: Uses lifecycle_manager for graceful shutdown, then process kill
 - SLAM: Uses process kill (SIGINT)
+
+Teleop compatibility:
+- /teleop/start_slam: Switch to mapping mode
+- /teleop/complete_slam: Save map + switch to navigation
+- /teleop/get_slam_state: Get current SLAM state
+- /teleop/restart_slam_toolbox: Restart SLAM (same as start_slam)
 """
 
+import json
+import time
+import threading
 import rclpy
 from rclpy.node import Node
 from rclpy.callback_groups import ReentrantCallbackGroup
 from ugv_interface.srv import SwitchMode, GetMode, StopAll, MapSave, ListMaps
+from std_srvs.srv import Trigger, Empty
 from nav2_msgs.srv import ManageLifecycleNodes
 from ament_index_python.packages import get_package_share_directory
 import os
@@ -59,6 +69,12 @@ class LaunchManagerNode(Node):
 
         # Nav2 lifecycle manager client (created lazily when needed)
         self.nav2_lifecycle_client = None
+
+        # SLAM state tracking (for teleop compatibility)
+        self._slam_enabled: bool = False
+        self._slam_started_at_ms: int | None = None
+        self._slam_control_lock = threading.Lock()
+        self._slam_control_in_progress = False
 
         # Start persistent background processes
         self.background_process = None
@@ -105,12 +121,22 @@ class LaunchManagerNode(Node):
             self.list_maps_callback
         )
 
+        # Teleop compatibility services (matches bootstrapper_ugv.py interface)
+        self.create_service(Trigger, '/teleop/start_slam', self._on_start_slam)
+        self.create_service(Trigger, '/teleop/complete_slam', self._on_complete_slam)
+        self.create_service(Trigger, '/teleop/get_slam_state', self._on_get_slam_state)
+        self.create_service(Empty, '/teleop/restart_slam_toolbox', self._on_restart_slam)
+
         self.get_logger().info("Launch Manager ready! Available services:")
         self.get_logger().info("  - /ugv/switch_mode")
         self.get_logger().info("  - /ugv/get_mode")
         self.get_logger().info("  - /ugv/stop_all")
         self.get_logger().info("  - /ugv/save_map")
         self.get_logger().info("  - /ugv/list_maps")
+        self.get_logger().info("  - /teleop/start_slam (Trigger)")
+        self.get_logger().info("  - /teleop/complete_slam (Trigger)")
+        self.get_logger().info("  - /teleop/get_slam_state (Trigger)")
+        self.get_logger().info("  - /teleop/restart_slam_toolbox (Empty)")
 
         # Auto-start default mode if specified
         if default_mode and default_mode != 'none':
@@ -733,6 +759,199 @@ class LaunchManagerNode(Node):
             response.map_paths = []
             self.get_logger().error(response.message)
 
+        return response
+
+    # ─────────────────────────────────────────────────────────────────────────────
+    # Teleop Compatibility Services
+    # These match the bootstrapper_ugv.py interface for seamless migration
+    # ─────────────────────────────────────────────────────────────────────────────
+
+    def _on_start_slam(self, request: Trigger.Request, response: Trigger.Response) -> Trigger.Response:
+        """Switch to SLAM/mapping mode.
+        
+        This is equivalent to: ros2 service call /ugv/switch_mode ... "{mode: 'mapping'}"
+        
+        Important: Non-blocking - runs mode switch in background thread to avoid
+        rosbridge/rosapi timeout issues with long callbacks.
+        """
+        with self._slam_control_lock:
+            if self._slam_control_in_progress:
+                response.success = False
+                response.message = "SLAM control already in progress"
+                return response
+            self._slam_control_in_progress = True
+
+        started_at_ms = int(time.time() * 1000)
+
+        def _do_start() -> None:
+            try:
+                self.get_logger().info("Starting SLAM mode (via /teleop/start_slam)...")
+                
+                # Stop current mode if active
+                if self.process_mgr.is_active():
+                    current_mode = self.process_mgr.current_mode
+                    self.get_logger().info(f"Stopping current mode: {current_mode}")
+                    
+                    # Use lifecycle shutdown for Nav2
+                    if current_mode == 'navigation':
+                        self.shutdown_nav2_lifecycle(timeout=5.0)
+                    
+                    self.process_mgr.stop_launch()
+
+                # Start mapping mode
+                mode_config = self.modes.get('mapping', {})
+                package = mode_config.get('launch_package', 'ugv_launch_manager')
+                launch_file = mode_config.get('launch_file', 'mode_mapping.launch.py')
+                arguments = mode_config.get('arguments', {}).copy()
+
+                if self.process_mgr.start_launch(package, launch_file, arguments):
+                    self.process_mgr.set_mode('mapping')
+                    self.current_mode_arguments = arguments.copy()
+                    self._slam_enabled = True
+                    self._slam_started_at_ms = started_at_ms
+                    self.get_logger().info("SLAM mode started successfully")
+                else:
+                    self.get_logger().error("Failed to start SLAM mode")
+                    self._slam_enabled = False
+                    self._slam_started_at_ms = None
+
+            except Exception as exc:
+                self.get_logger().error(f"Start SLAM failed: {exc}")
+                self._slam_enabled = False
+                self._slam_started_at_ms = None
+            finally:
+                with self._slam_control_lock:
+                    self._slam_control_in_progress = False
+
+        threading.Thread(target=_do_start, name="teleop_start_slam", daemon=True).start()
+        response.success = True
+        response.message = "Start SLAM requested"
+        return response
+
+    def _on_complete_slam(self, request: Trigger.Request, response: Trigger.Response) -> Trigger.Response:
+        """Save map and switch to navigation mode.
+        
+        This is equivalent to:
+        1. ros2 service call /ugv/save_map ...
+        2. ros2 service call /ugv/switch_mode ... "{mode: 'navigation', arg_names: ['map_path'], arg_values: ['<saved_map>']}"
+        """
+        try:
+            # Check if SLAM is running
+            if self.process_mgr.current_mode != 'mapping':
+                response.success = False
+                response.message = "SLAM (mapping mode) is not running"
+                return response
+
+            self.get_logger().info("Completing SLAM (via /teleop/complete_slam)...")
+
+            # Get map path from current arguments or use default
+            map_path = self.current_mode_arguments.get('map_path', '/home/ws/ugv_ws/maps/new_map')
+            
+            # Save the map
+            save_success, save_message = self.save_map(map_path)
+            if not save_success:
+                response.success = False
+                response.message = f"Failed to save map: {save_message}"
+                return response
+
+            self.get_logger().info(f"Map saved to {map_path}")
+
+            # Stop SLAM mode
+            self.process_mgr.stop_launch()
+            self._slam_enabled = False
+            self._slam_started_at_ms = None
+
+            # Start navigation mode with the saved map
+            mode_config = self.modes.get('navigation', {})
+            package = mode_config.get('launch_package', 'ugv_launch_manager')
+            launch_file = mode_config.get('launch_file', 'mode_navigation.launch.py')
+            arguments = mode_config.get('arguments', {}).copy()
+            
+            # Use the saved map path
+            arguments['map_path'] = f"{map_path}.yaml"
+
+            if self.process_mgr.start_launch(package, launch_file, arguments):
+                self.process_mgr.set_mode('navigation')
+                self.current_mode_arguments = arguments.copy()
+                response.success = True
+                response.message = f"Map saved to {map_path}.*; navigation started"
+                self.get_logger().info(response.message)
+            else:
+                response.success = False
+                response.message = "Map saved but failed to start navigation mode"
+                self.get_logger().error(response.message)
+
+        except Exception as exc:
+            self.get_logger().error(f"Complete SLAM failed: {exc}")
+            response.success = False
+            response.message = f"Complete SLAM failed: {exc}"
+
+        return response
+
+    def _on_get_slam_state(self, request: Trigger.Request, response: Trigger.Response) -> Trigger.Response:
+        """Report whether SLAM/mapping is currently running and when it was started.
+        
+        Returns JSON in message field for compatibility with bootstrapper_ugv.py.
+        """
+        running = (
+            self._slam_enabled and 
+            self.process_mgr.current_mode == 'mapping' and 
+            self.process_mgr.is_active()
+        )
+        started_at_ms = self._slam_started_at_ms if running else None
+
+        response.success = True
+        response.message = json.dumps({
+            "running": bool(running),
+            "startedAtMs": int(started_at_ms) if started_at_ms is not None else None,
+        })
+        return response
+
+    def _on_restart_slam(self, request: Empty.Request, response: Empty.Response) -> Empty.Response:
+        """Restart SLAM without saving - equivalent to start_slam.
+        
+        For compatibility with bootstrapper_ugv.py's /teleop/restart_slam_toolbox service.
+        """
+        self.get_logger().info("Restart SLAM requested (via /teleop/restart_slam_toolbox)...")
+
+        def _do_restart() -> None:
+            with self._slam_control_lock:
+                if self._slam_control_in_progress:
+                    self.get_logger().warn("SLAM control already in progress, skipping restart")
+                    return
+                self._slam_control_in_progress = True
+
+            try:
+                # Stop current SLAM if running
+                if self.process_mgr.current_mode == 'mapping' and self.process_mgr.is_active():
+                    self.get_logger().info("Stopping current SLAM process...")
+                    self.process_mgr.stop_launch()
+                    time.sleep(0.5)
+
+                # Start SLAM mode
+                mode_config = self.modes.get('mapping', {})
+                package = mode_config.get('launch_package', 'ugv_launch_manager')
+                launch_file = mode_config.get('launch_file', 'mode_mapping.launch.py')
+                arguments = mode_config.get('arguments', {}).copy()
+
+                if self.process_mgr.start_launch(package, launch_file, arguments):
+                    self.process_mgr.set_mode('mapping')
+                    self.current_mode_arguments = arguments.copy()
+                    self._slam_enabled = True
+                    self._slam_started_at_ms = int(time.time() * 1000)
+                    self.get_logger().info("SLAM restarted successfully")
+                else:
+                    self.get_logger().error("Failed to restart SLAM")
+                    self._slam_enabled = False
+                    self._slam_started_at_ms = None
+
+            except Exception as exc:
+                self.get_logger().error(f"Restart SLAM failed: {exc}")
+            finally:
+                with self._slam_control_lock:
+                    self._slam_control_in_progress = False
+
+        threading.Thread(target=_do_restart, name="teleop_restart_slam", daemon=True).start()
         return response
 
 

@@ -13,6 +13,7 @@
 
   <depend>rclpy</depend>
   <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
   <depend>ugv_interface</depend>
   <depend>launch</depend>
   <depend>launch_ros</depend>
