@@ -155,7 +155,8 @@ class ROSBridgeProxy:
                 # Don't spam logs with high-frequency publish messages
                 self.logger.debug(f"rosbridge_server -> Fleet DO: {op} {topic}")
             else:
-                self.logger.info(f"rosbridge_server -> Fleet DO: {op} {topic}")
+                # Use debug for routine forwarding, only errors at higher levels
+                self.logger.debug(f"rosbridge_server -> Fleet DO: {op} {topic}")
 
             # Forward to Fleet DO wrapped in rosbridge type
             if self.send_to_fleet:
@@ -193,7 +194,7 @@ class ROSBridgeProxy:
             return
 
         # Log the full payload for debugging
-        self.logger.info(f"Received from Fleet DO: {json.dumps(payload)[:200]}")
+        self.logger.debug(f"Received from Fleet DO: {json.dumps(payload)[:200]}")
 
         if not self.is_connected:
             self.logger.warning("Cannot forward to rosbridge_server - not connected")
@@ -204,7 +205,7 @@ class ROSBridgeProxy:
             await self._rosbridge_ws.send(message)
             op = payload.get("op", "unknown")
             topic = payload.get("topic", payload.get("service", ""))
-            self.logger.info(f"Forwarded to rosbridge_server: {op} {topic}")
+            self.logger.debug(f"Forwarded to rosbridge_server: {op} {topic}")
 
         except Exception as e:
             self.logger.error(f"Error forwarding to rosbridge_server: {e}")
