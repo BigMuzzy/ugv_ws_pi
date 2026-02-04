@@ -1,9 +1,9 @@
 modes:
-  # Idle mode - only camera
+  # Idle mode - teleoperation only (no sensors)
   idle:
     launch_package: 'ugv_launch_manager'
     launch_file: 'mode_idle.launch.py'
-    description: 'Camera only mode'
+    description: 'Teleoperation only mode (cmd_vel control, no camera/LIDAR)'
 
   # Mapping mode - SLAM with camera and sensors
   mapping:
