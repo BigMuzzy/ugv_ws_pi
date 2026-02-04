@@ -10,7 +10,10 @@ Includes:
 - Motor control (bringup, driver, base_node)
 - LIDAR driver
 - Laser odometry
-- Robot pose publisher
+
+Note: robot_pose_publisher is NOT included here because it requires
+a map frame which only exists during mapping or navigation modes.
+It's started by mode_mapping.launch.py and mode_navigation.launch.py.
 """
 
 import os
@@ -84,17 +87,6 @@ def generate_launch_description():
         )
     )
 
-    # Robot pose publisher
-    robot_pose_publisher_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(
-                get_package_share_directory('robot_pose_publisher'),
-                'launch',
-                'robot_pose_publisher_launch.py'
-            )
-        )
-    )
-
     return LaunchDescription([
         # Launch arguments
         pub_odom_tf_arg,
@@ -109,6 +101,4 @@ def generate_launch_description():
         # LIDAR and odometry
         laser_bringup_launch,
         rf2o_laser_odometry_launch,
-        # Robot pose
-        robot_pose_publisher_launch,
     ])
