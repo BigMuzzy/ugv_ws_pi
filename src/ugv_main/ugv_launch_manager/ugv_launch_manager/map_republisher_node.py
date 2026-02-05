@@ -46,6 +46,8 @@ class MapRepublisherNode(Node):
         self._last_map: Optional[OccupancyGrid] = None
         self._last_metadata: Optional[MapMetaData] = None
         self._map_received = False
+        # Content fingerprint for detecting actual map changes
+        self._last_map_fingerprint: Optional[str] = None
 
         # QoS profile for subscribing - transient_local to receive latched messages
         sub_qos = QoSProfile(depth=1)
@@ -85,15 +87,43 @@ class MapRepublisherNode(Node):
             f"Map republisher started: republishing {input_map_topic} @ {publish_rate:.2f} Hz"
         )
 
+    def _compute_map_fingerprint(self, msg: OccupancyGrid) -> str:
+        """Compute a content-based fingerprint for detecting actual map changes."""
+        w = msg.info.width
+        h = msg.info.height
+        res = msg.info.resolution
+        ox = msg.info.origin.position.x
+        oy = msg.info.origin.position.y
+        
+        # Sample data at regular intervals for efficiency
+        data = msg.data
+        sample_count = min(len(data), 1000)
+        step = max(1, len(data) // sample_count) if sample_count > 0 else 1
+        
+        data_hash = 0
+        for i in range(0, len(data), step):
+            data_hash = ((data_hash << 5) - data_hash + data[i]) & 0xFFFFFFFF
+        
+        return f"{w}x{h}@{res:.4f}:{ox:.3f},{oy:.3f}:{data_hash}"
+
     def _on_map(self, msg: OccupancyGrid) -> None:
         """Cache received map message."""
-        self._last_map = msg
+        new_fingerprint = self._compute_map_fingerprint(msg)
+        
         if not self._map_received:
             self._map_received = True
             self.get_logger().info(
                 f"Received map: {msg.info.width}x{msg.info.height} @ "
                 f"{msg.info.resolution:.3f} m/px"
             )
+        elif self._last_map_fingerprint != new_fingerprint:
+            self.get_logger().info(
+                f"Map content changed: {msg.info.width}x{msg.info.height} @ "
+                f"{msg.info.resolution:.3f} m/px (new fingerprint)"
+            )
+        
+        self._last_map = msg
+        self._last_map_fingerprint = new_fingerprint
 
     def _on_metadata(self, msg: MapMetaData) -> None:
         """Cache received map metadata message."""
