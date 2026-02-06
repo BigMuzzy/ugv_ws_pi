@@ -470,7 +470,7 @@ class LaunchManagerNode(Node):
                 'launch_package': 'ugv_launch_manager',
                 'launch_file': 'mode_navigation.launch.py',
                 'arguments': {
-                    'map_path': '/home/ws/ugv_ws/maps/second_floor.yaml'
+                    'map_path': '/home/ws/ugv_ws/maps/current_map.yaml'
                 },
                 'description': 'Navigation with Nav2'
             }
@@ -845,7 +845,7 @@ class LaunchManagerNode(Node):
             self.get_logger().info("Completing SLAM (via /teleop/complete_slam)...")
 
             # Get map path from current arguments or use default
-            map_path = self.current_mode_arguments.get('map_path', '/home/ws/ugv_ws/maps/new_map')
+            map_path = self.current_mode_arguments.get('map_path', '/home/ws/ugv_ws/maps/current_map')
             
             # Save the map
             save_success, save_message = self.save_map(map_path)
