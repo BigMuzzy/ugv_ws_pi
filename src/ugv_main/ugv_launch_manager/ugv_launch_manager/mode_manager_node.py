@@ -314,35 +314,41 @@ class ModeManagerNode(Node):
     # ─────────────────────────────────────────────────────────────────────────
 
     def _transition_to_idle(self):
-        """Deactivate all lifecycle nodes to unconfigured state.
+        """Deactivate lifecycle nodes that are currently active.
+
+        Only deactivates nodes relevant to the current mode to avoid
+        unnecessary DDS churn (e.g., Nav2 SHUTDOWN on unconfigured nodes
+        causes lifecycle_manager to destroy service clients, disrupting
+        subsequent service calls).
 
         Best-effort: errors in one don't block others.
         """
         errors = []
+        mode = self.current_mode
 
-        # 1. Deactivate slam_toolbox
-        try:
-            self.slam_lc.deactivate_and_cleanup()
-        except Exception as e:
-            errors.append(f"slam_toolbox: {e}")
+        # Deactivate slam_toolbox if we were mapping
+        if mode == 'mapping':
+            try:
+                self.slam_lc.deactivate_and_cleanup()
+            except Exception as e:
+                errors.append(f"slam_toolbox: {e}")
 
-        # 2. Shutdown Nav2 stack via lifecycle_manager
-        try:
-            self._shutdown_nav2(timeout=5.0)
-        except Exception as e:
-            errors.append(f"nav2: {e}")
+        # Shutdown Nav2 + deactivate amcl/map_server if we were navigating
+        if mode == 'navigation':
+            try:
+                self._shutdown_nav2(timeout=5.0)
+            except Exception as e:
+                errors.append(f"nav2: {e}")
 
-        # 3. Deactivate AMCL
-        try:
-            self.amcl_lc.deactivate_and_cleanup()
-        except Exception as e:
-            errors.append(f"amcl: {e}")
+            try:
+                self.amcl_lc.deactivate_and_cleanup()
+            except Exception as e:
+                errors.append(f"amcl: {e}")
 
-        # 4. Deactivate map_server
-        try:
-            self.map_server_lc.deactivate_and_cleanup()
-        except Exception as e:
-            errors.append(f"map_server: {e}")
+            try:
+                self.map_server_lc.deactivate_and_cleanup()
+            except Exception as e:
+                errors.append(f"map_server: {e}")
 
         # Update SLAM tracking
         self._slam_enabled = False
@@ -414,7 +420,7 @@ class ModeManagerNode(Node):
         future = self.nav2_lifecycle_client.call_async(request)
         start = time.monotonic()
         while not future.done():
-            rclpy.spin_once(self, timeout_sec=0.1)
+            time.sleep(0.05)
             if time.monotonic() - start > timeout:
                 raise RuntimeError(f"Nav2 startup timed out after {timeout}s")
 
@@ -436,7 +442,7 @@ class ModeManagerNode(Node):
         future = self.nav2_lifecycle_client.call_async(request)
         start = time.monotonic()
         while not future.done():
-            rclpy.spin_once(self, timeout_sec=0.1)
+            time.sleep(0.05)
             if time.monotonic() - start > timeout:
                 self.get_logger().warn(f"Nav2 shutdown timed out after {timeout}s")
                 return
@@ -471,7 +477,7 @@ class ModeManagerNode(Node):
             future = client.call_async(request)
             start = time.monotonic()
             while not future.done():
-                rclpy.spin_once(self, timeout_sec=0.1)
+                time.sleep(0.05)
                 if time.monotonic() - start > 5.0:
                     raise RuntimeError(
                         f"set_parameters timed out for {node_name}/{param_name}"
