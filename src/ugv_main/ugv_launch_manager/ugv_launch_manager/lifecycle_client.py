@@ -8,7 +8,6 @@ managed node with timeout handling and convenience methods.
 
 import time
 
-import rclpy
 from rclpy.node import Node
 from rclpy.callback_groups import CallbackGroup
 
@@ -47,11 +46,17 @@ class LifecycleClient:
         return self._name
 
     def _spin_until_future(self, future, timeout: float = None) -> bool:
-        """Spin the node until the future completes or timeout is reached."""
+        """Wait for the future to complete or timeout.
+
+        Uses polling instead of rclpy.spin_once() because the
+        MultiThreadedExecutor is already spinning the node.  Calling
+        spin_once() from a background thread causes 'generator already
+        executing' errors and corrupts the executor wait-set.
+        """
         timeout = timeout if timeout is not None else self._timeout
         start = time.monotonic()
         while not future.done():
-            rclpy.spin_once(self._node, timeout_sec=0.1)
+            time.sleep(0.05)
             if time.monotonic() - start > timeout:
                 self._logger.warn(
                     f"[{self._name}] Service call timed out after {timeout}s"
