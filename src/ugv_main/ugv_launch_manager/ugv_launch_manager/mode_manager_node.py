@@ -11,7 +11,7 @@ Architecture:
 Modes: IDLE, MAPPING, NAVIGATION
 
 Management approach:
-- slam_toolbox: lifecycle-managed (use_lifecycle_manager=true)
+- slam_toolbox: lifecycle-managed (use_lifecycle_manager=true via YAML params)
 - map_server: lifecycle-managed directly via lifecycle services
 - amcl: lifecycle-managed directly via lifecycle services
 - Nav2 stack (9 nodes): lifecycle-managed via lifecycle_manager_navigation startup/shutdown
