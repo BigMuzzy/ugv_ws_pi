@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Mode Manager Node
-Manages UGV operational modes via lifecycle node control.
+Manages UGV operational modes via ROS2 lifecycle node control.
 
 Architecture:
 - Background processes (always running, process-based): motors, LIDAR, TF, rosbridge, webrtc
@@ -11,7 +11,7 @@ Architecture:
 Modes: IDLE, MAPPING, NAVIGATION
 
 Management approach:
-- slam_toolbox: lifecycle-managed (use_lifecycle_manager=true via YAML params)
+- slam_toolbox: lifecycle-managed directly via lifecycle services (use_lifecycle_manager: true)
 - map_server: lifecycle-managed directly via lifecycle services
 - amcl: lifecycle-managed directly via lifecycle services
 - Nav2 stack (9 nodes): lifecycle-managed via lifecycle_manager_navigation startup/shutdown
@@ -297,21 +297,24 @@ class ModeManagerNode(Node):
         self.get_logger().info("Published initial pose for AMCL from SLAM pose")
 
     # ─────────────────────────────────────────────────────────────────────────
-    # SLAM Lifecycle Helpers
+    # SLAM Lifecycle Management
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _is_slam_active(self) -> bool:
-        """Check if slam_toolbox lifecycle node is in ACTIVE state."""
+    def _is_slam_running(self) -> bool:
+        """Check if slam_toolbox is in ACTIVE lifecycle state."""
         from lifecycle_msgs.msg import State
-        state = self.slam_lc.get_state(timeout=2.0)
-        return state == State.PRIMARY_STATE_ACTIVE
+        try:
+            state = self.slam_lc.get_state(timeout=2.0)
+            return state == State.PRIMARY_STATE_ACTIVE
+        except Exception:
+            return False
 
     # ─────────────────────────────────────────────────────────────────────────
     # Core Lifecycle Transition Logic
     # ─────────────────────────────────────────────────────────────────────────
 
     def _transition_to_idle(self):
-        """Deactivate all lifecycle nodes.
+        """Deactivate all lifecycle nodes to unconfigured state.
 
         Best-effort: errors in one don't block others.
         """
@@ -356,11 +359,11 @@ class ModeManagerNode(Node):
 
         # 2. Configure and activate slam_toolbox via lifecycle
         if not self.slam_lc.configure_and_activate():
-            raise RuntimeError("Failed to activate slam_toolbox")
+            raise RuntimeError("Failed to activate slam_toolbox via lifecycle")
 
         self._slam_enabled = True
         self._slam_started_at_ms = int(time.time() * 1000)
-        self.get_logger().info("MAPPING mode active: slam_toolbox running")
+        self.get_logger().info("MAPPING mode active: slam_toolbox lifecycle ACTIVE")
 
     def _transition_to_navigation(self, map_yaml_path: str):
         """Activate map_server, AMCL, and Nav2 stack."""
@@ -936,7 +939,7 @@ class ModeManagerNode(Node):
         running = (
             self._slam_enabled
             and self.current_mode == 'mapping'
-            and self._is_slam_active()
+            and self._is_slam_running()
         )
         started_at_ms = self._slam_started_at_ms if running else None
 
@@ -948,7 +951,7 @@ class ModeManagerNode(Node):
         return response
 
     def _on_restart_slam(self, request, response):
-        """Restart SLAM via lifecycle deactivate + cleanup + configure + activate.
+        """Restart SLAM via lifecycle deactivate/cleanup/configure/activate.
 
         Non-blocking: runs in background thread.
         """
@@ -970,13 +973,13 @@ class ModeManagerNode(Node):
                         self.slam_lc.deactivate_and_cleanup()
                         time.sleep(0.5)
 
-                        # Configure + activate slam_toolbox
+                        # Re-configure + activate slam_toolbox
                         if self.slam_lc.configure_and_activate():
                             self._slam_enabled = True
                             self._slam_started_at_ms = int(time.time() * 1000)
-                            self.get_logger().info("SLAM restarted successfully")
+                            self.get_logger().info("SLAM restarted successfully via lifecycle")
                         else:
-                            self.get_logger().error("Failed to restart SLAM")
+                            self.get_logger().error("Failed to restart SLAM via lifecycle")
                             self._slam_enabled = False
                             self._slam_started_at_ms = None
                     finally:

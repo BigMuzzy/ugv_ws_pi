@@ -5,8 +5,12 @@ Lifecycle Mode Launch File
 Launches all lifecycle-managed nodes at startup in UNCONFIGURED state.
 The mode_manager_node controls activation/deactivation via lifecycle service calls.
 
+slam_toolbox is launched as a LifecycleNode with use_lifecycle_manager: true
+(set in config/slam_toolbox.yaml). This tells the node to stay unconfigured
+and wait for external lifecycle transitions from mode_manager.
+
 Nodes launched:
-  - slam_toolbox (LifecycleNode, use_lifecycle_manager=true) — for MAPPING mode
+  - slam_toolbox (LifecycleNode) — for MAPPING mode
   - map_server (LifecycleNode) — for NAVIGATION mode
   - amcl (LifecycleNode) — for NAVIGATION mode
   - Nav2 navigation stack (via navigation_launch.py, autostart=false)
@@ -30,10 +34,8 @@ def generate_launch_description():
     ugv_nav_dir = get_package_share_directory('ugv_nav')
     ugv_launch_dir = get_package_share_directory('ugv_launch_manager')
 
-    # Default Nav2 param file (amcl + teb)
+    # Config files
     default_params_file = os.path.join(ugv_nav_dir, 'param', 'amcl_teb.yaml')
-
-    # SLAM toolbox param file (must be YAML for use_lifecycle_manager to be read)
     slam_params_file = os.path.join(ugv_launch_dir, 'config', 'slam_toolbox.yaml')
 
     # Declare arguments
@@ -50,19 +52,17 @@ def generate_launch_description():
     )
 
     # ─── SLAM Toolbox as LifecycleNode (starts UNCONFIGURED) ───
-    # Parameters loaded from YAML file — slam_toolbox requires YAML format
-    # for use_lifecycle_manager to be read at node construction time.
-    # Inline dict parameters are NOT picked up early enough.
+    # use_lifecycle_manager: true in slam_toolbox.yaml tells the node to
+    # stay unconfigured and wait for external lifecycle transitions.
+    # No EmitEvent/ChangeState actions — mode_manager handles transitions.
     slam_toolbox_node = LifecycleNode(
         package='slam_toolbox',
         executable='async_slam_toolbox_node',
         name='slam_toolbox',
         namespace='',
         output='screen',
-        arguments=['--ros-args', '--log-level', 'info'],
         parameters=[slam_params_file],
         remappings=[
-            ('/scan', '/scan'),
             ('/odom', '/odom_rf2o'),
         ],
     )

@@ -1,6 +1,6 @@
 slam_toolbox:
   ros__parameters:
-    # Lifecycle - MUST be in YAML for slam_toolbox to read it
+    # Lifecycle management — external manager (mode_manager) controls transitions
     use_lifecycle_manager: true
 
     # ROS Parameters
