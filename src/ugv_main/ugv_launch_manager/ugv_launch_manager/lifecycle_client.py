@@ -63,7 +63,7 @@ class LifecycleClient:
         """Query the current lifecycle state. Returns state ID or -1 on failure."""
         timeout = timeout if timeout is not None else self._timeout
         if not self._get_state_client.wait_for_service(timeout_sec=min(timeout, 5.0)):
-            self._logger.warn(f"[{self._name}] get_state service not available")
+            self._logger.info(f"[{self._name}] get_state service not available")
             return -1
 
         request = GetState.Request()
@@ -160,15 +160,21 @@ class LifecycleClient:
         return False
 
     def deactivate_and_cleanup(self, timeout: float = None) -> bool:
-        """Deactivate then cleanup to unconfigured. Returns True on success."""
+        """Deactivate then cleanup to unconfigured. Returns True on success.
+
+        If the node's lifecycle services are not available (e.g., node not
+        yet launched or already gone), this returns True — there is nothing
+        to deactivate.
+        """
         timeout = timeout if timeout is not None else self._timeout
 
         current = self.get_state(timeout=5.0)
         if current == -1:
-            self._logger.warn(
-                f"[{self._name}] Cannot get state during deactivate_and_cleanup"
+            self._logger.info(
+                f"[{self._name}] Lifecycle services not available, "
+                f"assuming already clean"
             )
-            return False
+            return True
 
         # Already unconfigured, nothing to do
         if current == State.PRIMARY_STATE_UNCONFIGURED:

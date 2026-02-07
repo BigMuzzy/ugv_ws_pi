@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
 """
 Mode Manager Node
-Manages UGV operational modes via ROS2 lifecycle node control.
+Manages UGV operational modes via lifecycle node control.
 
 Architecture:
 - Background processes (always running, process-based): motors, LIDAR, TF, rosbridge, webrtc
 - Lifecycle launch (always running): slam_toolbox, map_server, amcl, Nav2 (all start unconfigured)
-- Mode switching: activates/deactivates lifecycle nodes instead of spawning/killing processes
+- Mode switching: lifecycle transitions for all managed nodes
 
 Modes: IDLE, MAPPING, NAVIGATION
 
-Lifecycle management:
-- slam_toolbox: managed directly via lifecycle services
-- map_server: managed directly via lifecycle services
-- amcl: managed directly via lifecycle services
-- Nav2 stack (9 nodes): managed via lifecycle_manager_navigation startup/shutdown service
+Management approach:
+- slam_toolbox: lifecycle-managed (use_lifecycle_manager=true)
+- map_server: lifecycle-managed directly via lifecycle services
+- amcl: lifecycle-managed directly via lifecycle services
+- Nav2 stack (9 nodes): lifecycle-managed via lifecycle_manager_navigation startup/shutdown
 
 Teleop compatibility:
 - /teleop/start_slam: Switch to mapping mode
 - /teleop/complete_slam: Save map + switch to navigation (with AMCL pose seeding)
 - /teleop/get_slam_state: Get current SLAM state
-- /teleop/restart_slam_toolbox: Restart SLAM via deactivate+cleanup+configure+activate
+- /teleop/restart_slam_toolbox: Restart SLAM via lifecycle deactivate/activate
 """
 
 import json
@@ -99,7 +99,7 @@ class ModeManagerNode(Node):
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
 
-        # Lifecycle clients for directly-managed nodes
+        # Lifecycle clients for managed nodes (slam_toolbox, map_server, amcl)
         self.slam_lc = LifecycleClient(
             self, 'slam_toolbox', self.cb_group, self.transition_timeout
         )
@@ -297,18 +297,29 @@ class ModeManagerNode(Node):
         self.get_logger().info("Published initial pose for AMCL from SLAM pose")
 
     # ─────────────────────────────────────────────────────────────────────────
+    # SLAM Lifecycle Helpers
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _is_slam_active(self) -> bool:
+        """Check if slam_toolbox lifecycle node is in ACTIVE state."""
+        from lifecycle_msgs.msg import State
+        state = self.slam_lc.get_state(timeout=2.0)
+        return state == State.PRIMARY_STATE_ACTIVE
+
+    # ─────────────────────────────────────────────────────────────────────────
     # Core Lifecycle Transition Logic
     # ─────────────────────────────────────────────────────────────────────────
 
     def _transition_to_idle(self):
-        """Deactivate all lifecycle nodes. Best-effort: errors in one don't block others."""
+        """Deactivate all lifecycle nodes.
+
+        Best-effort: errors in one don't block others.
+        """
         errors = []
 
-        # 1. Deactivate slam_toolbox if active
+        # 1. Deactivate slam_toolbox
         try:
-            if not self.slam_lc.deactivate_and_cleanup():
-                # May already be unconfigured — check state
-                pass
+            self.slam_lc.deactivate_and_cleanup()
         except Exception as e:
             errors.append(f"slam_toolbox: {e}")
 
@@ -320,15 +331,13 @@ class ModeManagerNode(Node):
 
         # 3. Deactivate AMCL
         try:
-            if not self.amcl_lc.deactivate_and_cleanup():
-                pass
+            self.amcl_lc.deactivate_and_cleanup()
         except Exception as e:
             errors.append(f"amcl: {e}")
 
         # 4. Deactivate map_server
         try:
-            if not self.map_server_lc.deactivate_and_cleanup():
-                pass
+            self.map_server_lc.deactivate_and_cleanup()
         except Exception as e:
             errors.append(f"map_server: {e}")
 
@@ -341,11 +350,11 @@ class ModeManagerNode(Node):
         return len(errors) == 0
 
     def _transition_to_mapping(self):
-        """Activate slam_toolbox, deactivate everything else."""
+        """Activate slam_toolbox, deactivate navigation lifecycle nodes."""
         # 1. Ensure all nodes are idle
         self._transition_to_idle()
 
-        # 2. Configure and activate slam_toolbox
+        # 2. Configure and activate slam_toolbox via lifecycle
         if not self.slam_lc.configure_and_activate():
             raise RuntimeError("Failed to activate slam_toolbox")
 
@@ -927,6 +936,7 @@ class ModeManagerNode(Node):
         running = (
             self._slam_enabled
             and self.current_mode == 'mapping'
+            and self._is_slam_active()
         )
         started_at_ms = self._slam_started_at_ms if running else None
 
@@ -938,7 +948,7 @@ class ModeManagerNode(Node):
         return response
 
     def _on_restart_slam(self, request, response):
-        """Restart SLAM via lifecycle deactivate+cleanup+configure+activate.
+        """Restart SLAM via lifecycle deactivate + cleanup + configure + activate.
 
         Non-blocking: runs in background thread.
         """
@@ -956,11 +966,11 @@ class ModeManagerNode(Node):
                     self.transition_in_progress = True
                     self._publish_mode_status()
                     try:
-                        # Deactivate and cleanup slam_toolbox
+                        # Deactivate + cleanup slam_toolbox
                         self.slam_lc.deactivate_and_cleanup()
                         time.sleep(0.5)
 
-                        # Re-configure and activate
+                        # Configure + activate slam_toolbox
                         if self.slam_lc.configure_and_activate():
                             self._slam_enabled = True
                             self._slam_started_at_ms = int(time.time() * 1000)
