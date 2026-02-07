@@ -3,7 +3,8 @@ slam_toolbox:
     # Lifecycle: false disables bond creation (mode_manager uses direct lifecycle
     # service calls, not Nav2 lifecycle_manager). Node still starts unconfigured
     # because mode_lifecycle.launch.py uses LifecycleNode without auto-events.
-    use_lifecycle_manager: false
+    auto_start: false
+    use_lifecycle_manager: true
 
     # ROS Parameters
     use_sim_time: false
