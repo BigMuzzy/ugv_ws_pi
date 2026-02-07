@@ -1,7 +1,9 @@
 slam_toolbox:
   ros__parameters:
-    # Lifecycle management — external manager (mode_manager) controls transitions
-    use_lifecycle_manager: true
+    # Lifecycle: false disables bond creation (mode_manager uses direct lifecycle
+    # service calls, not Nav2 lifecycle_manager). Node still starts unconfigured
+    # because mode_lifecycle.launch.py uses LifecycleNode without auto-events.
+    use_lifecycle_manager: false
 
     # ROS Parameters
     use_sim_time: false
