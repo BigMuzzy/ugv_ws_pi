@@ -16,6 +16,7 @@
   <depend>tf2_ros</depend>
   <depend>message_filters</depend>
   <depend>geometry_msgs</depend>
+  <depend>builtin_interfaces</depend>
   
 
   <test_depend>ament_lint_auto</test_depend>

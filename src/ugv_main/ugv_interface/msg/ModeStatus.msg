@@ -1,0 +1,4 @@
+string current_mode
+string previous_mode
+builtin_interfaces/Time stamp
+bool transition_in_progress

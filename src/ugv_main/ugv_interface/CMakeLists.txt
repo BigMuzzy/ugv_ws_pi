@@ -18,14 +18,17 @@ endif()
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
+find_package(builtin_interfaces REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/ModeStatus.msg"
   "srv/MapSave.srv"
   "srv/SwitchMode.srv"
   "srv/GetMode.srv"
   "srv/StopAll.srv"
   "srv/ListMaps.srv"
   "action/Behavior.action"
+  DEPENDENCIES builtin_interfaces
 )
 #ament_target_dependencies(
 #  "rclcpp"
@@ -43,7 +46,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 #  DESTINATION lib/${PROJECT_NAME})
 
 include_directories(include/ugv_slam)
-install(DIRECTORY srv action DESTINATION share/${PROJECT_NAME})
+install(DIRECTORY msg srv action DESTINATION share/${PROJECT_NAME})
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

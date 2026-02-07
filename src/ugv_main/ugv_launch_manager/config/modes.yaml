@@ -1,16 +1,15 @@
-modes:
-  # Mapping mode - SLAM with SLAM Toolbox
-  mapping:
-    launch_package: 'ugv_launch_manager'
-    launch_file: 'mode_mapping.launch.py'
-    arguments:
-      map_path: '/home/ws/ugv_ws/maps/new_map'
-    description: 'SLAM mapping mode (builds map)'
+# Mode definitions for the lifecycle-based mode manager.
+# All lifecycle nodes are launched at startup in unconfigured state via
+# mode_lifecycle.launch.py. The mode manager activates/deactivates them.
 
-  # Navigation mode - Nav2 with AMCL localization
+modes:
+  idle:
+    description: 'All nodes inactive/unconfigured'
+
+  mapping:
+    description: 'SLAM mapping mode (slam_toolbox active)'
+
   navigation:
-    launch_package: 'ugv_launch_manager'
-    launch_file: 'mode_navigation.launch.py'
-    arguments:
-      map_path: '/home/ws/ugv_ws/maps/second_floor.yaml'
-    description: 'Navigation with Nav2 (uses existing map)'
+    description: 'Navigation with Nav2 (map_server + AMCL + Nav2 active)'
+    default_arguments:
+      map_path: '/home/ws/ugv_ws/maps/current_map.yaml'

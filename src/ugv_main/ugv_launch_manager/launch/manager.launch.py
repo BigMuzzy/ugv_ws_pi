@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Launch Manager Launcher
-Starts the launch manager node
+Mode Manager Launcher
+Starts the mode manager node (lifecycle-based mode switching)
 """
 
 from launch import LaunchDescription
@@ -25,16 +25,19 @@ def generate_launch_description():
         description='Enable debug mode - show all subprocess output to console (true/false)'
     )
 
-    # Launch manager node
+    # Mode manager node (lifecycle-based)
     manager_node = Node(
         package='ugv_launch_manager',
-        executable='launch_manager',
-        name='launch_manager',
+        executable='mode_manager',
+        name='mode_manager',
         output='screen',
         emulate_tty=True,
         parameters=[{
             'default_mode': LaunchConfiguration('default_mode'),
-            'debug': LaunchConfiguration('debug')
+            'debug': LaunchConfiguration('debug'),
+            'transition_timeout': 10.0,
+            'map_save_path': '/home/ws/ugv_ws/maps/current_map',
+            'maps_directory': '/home/ws/ugv_ws/maps',
         }]
     )
 

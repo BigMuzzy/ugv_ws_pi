@@ -26,6 +26,7 @@ setup(
     entry_points={
         'console_scripts': [
             'launch_manager = ugv_launch_manager.launch_manager_node:main',
+            'mode_manager = ugv_launch_manager.mode_manager_node:main',
             'map_republisher = ugv_launch_manager.map_republisher_node:main',
         ],
     },
